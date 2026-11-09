@@ -14,6 +14,36 @@
   const $ = (sel, root) => (root || document).querySelector(sel);
   const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
 
+
+  /* ------------------------------ icons ------------------------------
+     One consistent stroke-icon set (24px grid, 1.8 stroke) instead of
+     unicode symbols, which render differently on every phone. */
+  const ICONS = {
+    home: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M9.5 21v-6h5v6"/>',
+    truckIn: '<path d="M12 3v10"/><path d="m7.5 8.5 4.5 4.5 4.5-4.5"/><path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/>',
+    list: '<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M7 9h10M7 13h10M7 17h6"/>',
+    warehouse: '<path d="M3 21V8l9-5 9 5v13"/><path d="M7 21v-8h10v8"/><path d="M7 17h10"/>',
+    flame: '<path d="M12 3c1 3.5 5 5.5 5 10a5 5 0 0 1-10 0c0-2.5 1.5-4 2.5-5.5C10 10 11 11 12 11c0-3-1-5.5 0-8Z"/>',
+    tag: '<path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9-9-9Z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
+    search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+    alert: '<path d="M12 3 2 20h20L12 3Z"/><path d="M12 10v4M12 17.5v.01"/>',
+    returns: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>',
+    wallet: '<rect x="3" y="6" width="18" height="14" rx="3"/><path d="M3 10h18"/><path d="M16 15h2"/><path d="M6 6V5a2 2 0 0 1 2-2h9"/>',
+    truck: '<path d="M2 6h11v10H2z"/><path d="M13 9h4l4 4v3h-8"/><circle cx="6" cy="18" r="2"/><circle cx="17" cy="18" r="2"/>',
+    leaf: '<path d="M5 19c0-8 5-14 15-15-1 10-7 15-15 15Z"/><path d="M5 19c3-4 6-6.5 10-9"/>',
+    chart: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+    settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/>',
+    grid: '<rect x="3" y="3" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="2"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="2"/>',
+    back: '<path d="m15 18-6-6 6-6"/>',
+    chevron: '<path d="m9 18 6-6-6-6"/>',
+    x: '<path d="M18 6 6 18M6 6l12 12"/>',
+    logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>',
+    download: '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/>',
+    cloud: '<path d="M7 18a5 5 0 1 1 .9-9.9A6 6 0 0 1 19 10a4 4 0 0 1-1 8H7Z"/>',
+  };
+  const icon = (name, cls = '') =>
+    `<svg class="ico ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ''}</svg>`;
+
   /* ------------------------------ toasts ----------------------------- */
   function stack() {
     let el = $('#toast-stack');
@@ -30,27 +60,71 @@
     setTimeout(() => { el.classList.add('toast-out'); setTimeout(() => el.remove(), 320); }, ms);
   }
 
+  /* --------------------------- back button ---------------------------
+     Every open dialog / sheet owns one browser-history entry, so the phone's
+     back gesture (or the browser back button) closes the top dialog instead
+     of leaving the page behind it. Closing a dialog with ✕ pops that entry.
+     Navigation requested while a pop is in flight waits for it to finish. */
+  const layers = [];
+  let pendingPops = 0;
+  const afterPop = [];
+  window.addEventListener('popstate', () => {
+    if (pendingPops > 0) {
+      pendingPops--;
+      if (!pendingPops) afterPop.splice(0).forEach((fn) => fn());
+      return;
+    }
+    const top = layers[layers.length - 1];
+    if (top) top.close(true);
+  });
+  function pushLayer(close) {
+    const layer = { close };
+    layers.push(layer);
+    try { history.pushState({ efplLayer: layers.length }, '', location.href); } catch { /* sandboxed */ }
+    return layer;
+  }
+  function dropLayer(layer, fromPop) {
+    const i = layers.indexOf(layer);
+    if (i < 0) return;
+    layers.splice(i, 1);
+    if (!fromPop) { pendingPops++; history.back(); }
+  }
+  /** Run fn once any history pops started by closing dialogs have landed. */
+  function whenSettled(fn) { if (pendingPops) afterPop.push(fn); else fn(); }
+  /** Close every open dialog (used when the page changes). */
+  function closeAllLayers() { layers.slice().reverse().forEach((l) => l.close(true)); }
+
   /* ------------------------------ modal ------------------------------ */
   function modal({ title, body, footer, size = 'md', onMount, dismissible = true }) {
     const backdrop = document.createElement('div');
-    backdrop.className = 'modal-backdrop';
+    backdrop.className = `modal-backdrop${size === 'sheet' ? ' is-sheet' : ''}`;
     backdrop.innerHTML = `
       <div class="modal modal-${size}" role="dialog" aria-modal="true" aria-label="${attr(title)}">
+        <div class="sheet-grabber" aria-hidden="true"></div>
         <header class="modal-head">
           <h2>${esc(title)}</h2>
-          ${dismissible ? '<button class="icon-btn" data-close aria-label="Close">✕</button>' : ''}
+          ${dismissible ? `<button class="icon-btn" data-close aria-label="Close">${icon('x')}</button>` : ''}
         </header>
         <div class="modal-body">${body || ''}</div>
         ${footer ? `<footer class="modal-foot">${footer}</footer>` : ''}
       </div>`;
     document.body.appendChild(backdrop);
+    document.documentElement.classList.add('has-modal');
     requestAnimationFrame(() => backdrop.classList.add('open'));
 
-    const close = () => {
+    let closed = false;
+    const close = (fromPop) => {
+      if (closed) return;
+      closed = true;
+      dropLayer(layer, fromPop === true);
       backdrop.classList.remove('open');
-      setTimeout(() => backdrop.remove(), 200);
+      setTimeout(() => {
+        backdrop.remove();
+        if (!document.querySelector('.modal-backdrop')) document.documentElement.classList.remove('has-modal');
+      }, 220);
       document.removeEventListener('keydown', onKey);
     };
+    const layer = pushLayer(close);
     const onKey = (e) => { if (e.key === 'Escape' && dismissible) close(); };
     document.addEventListener('keydown', onKey);
 
@@ -115,7 +189,7 @@
     return `<div class="table-wrap nm-inset">
       <table class="data-table">
         <thead><tr>${columns.map((c) => `<th class="${c.cls || ''}">${esc(c.label)}</th>`).join('')}</tr></thead>
-        <tbody>${rows.map((r) => `<tr ${rowKey ? `data-key="${attr(rowKey(r))}"` : ''}>${columns.map((c) => `<td class="${c.cls || ''}">${c.render ? c.render(r) : esc(r[c.key])}</td>`).join('')}</tr>`).join('')}</tbody>
+        <tbody>${rows.map((r) => `<tr ${rowKey ? `data-key="${attr(rowKey(r))}"` : ''}>${columns.map((c) => `<td class="${c.cls || ''}" data-label="${attr(c.label)}">${c.render ? c.render(r) : esc(r[c.key])}</td>`).join('')}</tr>`).join('')}</tbody>
       </table></div>`;
   }
 
@@ -246,7 +320,7 @@
   }
 
   window.UI = {
-    esc, attr, $, $$, toast, modal, confirm, badge, statusTone, stat, table, empty,
+    esc, attr, $, $$, icon, whenSettled, closeAllLayers, pushLayer, dropLayer, toast, modal, confirm, badge, statusTone, stat, table, empty,
     field, input, select, textarea, money, kg, dt, dOnly, formData, showErrors,
     download, toCSV, print, debounce,
   };
