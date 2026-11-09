@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>EnerFab Biomass Storage</title>
+  <meta name="description" content="Offline-first biomass bag tracking, bay storage and supplier payment system for EnerFab (Pvt) Ltd." />
+  <meta name="theme-color" content="#e8ece5" />
+  <meta name="color-scheme" content="light" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="assets/enerfab-logo.png" />
+  <link rel="apple-touch-icon" href="assets/enerfab-logo.png" />
+  <link rel="stylesheet" href="css/app.css" />
+</head>
+<body>
+  <div id="app" class="app-root"></div>
+  <div id="toast-stack" class="toast-stack" aria-live="polite"></div>
+  <noscript><div class="noscript">This application needs JavaScript enabled.</div></noscript>
+
+  <script src="js/config.js"></script>
+  <script src="js/store.js"></script>
+  <script src="js/domain.js"></script>
+  <script src="js/firebase.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/sync.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/seed.js"></script>
+  <script src="js/app.js"></script>
+  <script src="js/views-core.js"></script>
+  <script src="js/views-stock.js"></script>
+  <script src="js/views-money.js"></script>
+  <script>
+    (function () {
+      // Service worker gives us true offline start-up when the app is served
+      // over http(s). It is skipped silently where it is not allowed.
+      if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+        window.addEventListener('load', function () {
+          navigator.serviceWorker.register('sw.js').catch(function () { /* preview sandbox */ });
+        });
+      }
+      window.addEventListener('load', function () { window.App.boot(); });
+    })();
+  </script>
+</body>
+</html>

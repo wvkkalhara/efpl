@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Syntax, tests and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install test dependency
+        run: npm install --no-audit --no-fund
+
+      - name: Syntax-check every source file
+        run: |
+          set -e
+          for f in js/*.js sw.js server.js build.js tests/*.js; do
+            echo "checking $f"
+            node --check "$f"
+          done
+
+      - name: Validate JSON files
+        run: |
+          for f in firebase.json .firebaserc firebase.rules.json manifest.webmanifest package.json; do
+            node -e "JSON.parse(require('fs').readFileSync('$f','utf8'))" && echo "ok $f"
+          done
+
+      - name: Run the smoke test (74 checks against the real app)
+        run: npm test
+
+      - name: Build the single-file bundle
+        run: npm run build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EnerFab-Biomass-Storage
+          path: dist/EnerFab-Biomass-Storage.html
+          retention-days: 30

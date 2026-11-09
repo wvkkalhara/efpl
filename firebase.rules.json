@@ -1,0 +1,37 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+
+    "appConfig": {
+      ".read": "auth != null",
+      ".write": "auth != null && auth.token.email === 'w.v.k.kalhara@gmail.com'",
+      "subscription": {
+        ".validate": "newData.hasChildren(['status','updatedAt']) && (newData.child('status').val() === 'ACTIVE' || newData.child('status').val() === 'SUSPENDED')"
+      }
+    },
+
+    "users": {
+      ".read": "auth != null",
+      "$uid": {
+        ".write": "auth != null && (auth.uid === $uid || auth.token.email === 'w.v.k.kalhara@gmail.com' || root.child('users').child(auth.uid).child('role').val() === 'admin')",
+        "role": {
+          ".write": "auth != null && (auth.token.email === 'w.v.k.kalhara@gmail.com' || root.child('users').child(auth.uid).child('role').val() === 'admin')",
+          ".read": "auth != null",
+          ".validate": "newData.isString() && newData.val().matches(/^(admin|supervisor|storekeeper|operator|accounts|auditor)$/)"
+        },
+        ".validate": "newData.hasChildren(['email']) && newData.child('email').val() === auth.token.email"
+      }
+    },
+
+    "biomass": {
+      ".read": "auth != null",
+      "$collection": {
+        ".write": "auth != null && (auth.token.email === 'w.v.k.kalhara@gmail.com' || !root.child('appConfig/subscription/status').exists() || root.child('appConfig/subscription/status').val() === 'ACTIVE')",
+        "$record": {
+          ".validate": "newData.hasChildren(['id']) && newData.child('id').val() === $record && newData.child('updatedAt').isString()"
+        }
+      }
+    }
+  }
+}
