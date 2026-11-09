@@ -376,19 +376,20 @@
     },
 
     /**
-     * Owner preview / demonstration sign-in. No network, no Firebase token:
+     * Demonstration sign-in (as an Administrator). No network, no Firebase token:
      * used only when EFPL_CONFIG.allowLocalPreview is true (switch it off
      * for production) so the app can be shown on a device with no signal.
      */
     previewSignIn() {
       if (!CFG.allowLocalPreview) throw new Error('Preview sign-in is switched off');
-      const owner = CFG.superAdminEmails[0];
-      const profile = Store.all('users').find((u) => u.email.toLowerCase() === owner.toLowerCase());
+      // The demo always opens as a normal Administrator — never as the owner —
+      // so anyone shown the demo sees exactly what an admin would see.
+      const profile = Store.all('users').find((u) => u.role === 'admin' && u.active !== false && !isSuperEmail(u.email));
       session = {
-        uid: (profile && profile.uid) || 'preview-owner',
-        email: owner,
-        name: (profile && profile.name) || 'W. V. K. Kalhara',
-        role: 'super_admin',
+        uid: (profile && profile.uid) || 'preview-admin',
+        email: (profile && profile.email) || 'admin.demo@efpl.org',
+        name: (profile && profile.name) || 'Demo Administrator',
+        role: 'admin',
         mode: 'preview',
         idToken: null,
         refreshToken: null,

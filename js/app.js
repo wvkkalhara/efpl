@@ -161,7 +161,7 @@
 
           ${announcement ? `<div class="banner banner-info"><span>${esc(announcement)}</span></div>` : ''}
           ${user.mode === 'preview' ? `<div class="banner banner-warn">
-            <span><b>Preview session.</b> Signed in as the owner without Firebase, showing the demo history. Nothing here reaches your real database.</span></div>` : ''}
+            <span><b>Demo session.</b> You are viewing the system as an Administrator with sample records. Nothing here reaches the live database.</span></div>` : ''}
           ${Store.persistence === 'memory' ? `<div class="banner banner-warn">
             <span><b>Preview mode:</b> this frame cannot write to device storage, so changes live in memory only. Open the installed app or the served copy for full offline saving.</span></div>` : ''}
           <main id="view" class="view" tabindex="-1"></main>
@@ -205,8 +205,9 @@
       const s = Sync.state;
       chip.dataset.phase = s.phase;
       const pending = (Store.data.outbox || []).length;
-      chip.querySelector('.sync-text').textContent = pending ? `${pending} pending` : Sync.label();
-      chip.title = [Sync.label(), s.lastSyncAt ? `Last sync ${D.dt(s.lastSyncAt)}` : 'Not synced yet', s.lastError || ''].filter(Boolean).join(' · ');
+      const isDemo = (Auth.current() || {}).mode === 'preview';
+      chip.querySelector('.sync-text').textContent = isDemo ? 'Demo data' : (pending ? `${pending} pending` : Sync.label());
+      chip.title = isDemo ? 'Demo session — sample records are not sent to the live database' : [Sync.label(), s.lastSyncAt ? `Last sync ${D.dt(s.lastSyncAt)}` : 'Not synced yet', s.lastError || ''].filter(Boolean).join(' · ');
     },
 
     /* ---------------------------- sign in ---------------------------- */
@@ -246,15 +247,9 @@
             </div>
             ${CFG.allowLocalPreview ? `<div class="preview-row">
               <button type="button" class="nm-btn block" id="preview-btn">⌘ Preview with demo data (no sign-in)</button>
-              <p class="muted small">For demonstration only. Switch <code>allowLocalPreview</code> off in <code>js/config.js</code> before go-live.</p>
+              <p class="muted small">Opens the system as an Administrator with sample records. Nothing you change here is saved to the live database.</p>
             </div>` : ''}
           </form>
-
-          <p class="auth-note">
-            Signing in with Google creates your account on the spot — the owner then gives it a role.
-            The owner account <b>${esc(CFG.superAdminEmails[0])}</b> is recognised automatically and has full control.
-            Once you have signed in on a device it keeps working with no connection.
-          </p>
         </div>
         <p class="auth-foot">© EnerFab (Pvt) Ltd · No. 115/3 Rampart Road, Sri Jayawardanapura Kotte</p>
       </div>`;
