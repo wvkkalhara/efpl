@@ -3,6 +3,150 @@
 All notable changes to the EnerFab Biomass Storage system.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.4.4] — 2026-11-12
+
+### Added
+
+* **My account.** Everyone, whatever their role, has "My account and
+  password" in the account menu (and in the phone "More" sheet). Someone who
+  joined with Google can create a password there and then also sign in with
+  email and password, including with no signal on that device. Anyone can
+  change their password there.
+
+### Changed
+
+* **The demo is hidden.** The "Preview with demo data" button is gone from the
+  sign-in screen. The owner can bring it back from Administration →
+  Subscription → Demo mode (shown on every device's sign-in screen), or open
+  the demo on their own device from the same place. The "Remove demo data"
+  button is gone, since real devices never hold demo records.
+
+### Fixed
+
+* The announcement banner was only saved on the owner's device; it now reaches
+  every device.
+
+## [1.4.3] — 2026-11-12
+
+### Changed
+
+* **Simpler look.** Light sidebar, white cards on a soft background, one green
+  for actions, bigger text (16px) and bigger touch targets (48px, 52–54px for
+  the main action), rounded shapes, tables without boxes. The only dark block
+  left is the "In the yard now" figure on the dashboard. One type family on
+  every device, with room for Sinhala.
+* **Receive biomass is now four short steps** (Supplier, Weight, Fill check,
+  Bags) shown one at a time, with Back and Next. A step cannot be skipped
+  while something in it is missing, and Enter moves to the next step.
+
+### Fixed
+
+* **A person who signed in did not appear for the administrator.** The staff
+  list on Users & roles was read once when the screen opened, so anyone who
+  signed in afterwards stayed invisible until the administrator left the
+  screen and came back.
+* **New sign-ins and role changes now arrive at once.** The staff list has its
+  own live link: an administrator's device hears about a new person within a
+  second or two and shows a notice, and the person's own device gets its role
+  the moment it is given (before, up to 30 seconds).
+* The "waiting for approval" screen kept checking every 25 seconds for ever,
+  even after the person was let in, redrawing the app each time.
+* Someone who signs in with Google and is still waiting for a role now starts
+  syncing straight away, so their sign-up is uploaded without delay.
+
+## [1.4.2] — 2026-11-12
+
+### Changed
+
+* **Reports are a live view.** Pick any period (7, 30 or 90 days, this month,
+  all time, or your own dates), a supplier and a biomass type, and every
+  figure, the in/out chart and all tables follow at once. The page updates by
+  itself when records arrive from another device, and keeps your filters.
+  New: money summary, payments by stage, loads by biomass type, moisture per
+  supplier, and a payments CSV.
+* **Everything updates in real time.** A change made on one device is uploaded
+  about two seconds later, and every other device hears about it at once over
+  a live link to the cloud and redraws: dashboard, deliveries, payments,
+  reports, the staff list and the activity log. The sync chip says "Live" while
+  the link is open. If the link cannot be opened, the regular checks carry on
+  as before. Needs the latest `firebase.rules.json` (it adds the small "pulse"
+  value the devices watch).
+* **Printing works on phones and tablets.** Receipts, bag labels, allocation
+  slips, payment slips, supplier statements and reports are now printed from
+  the app's own window with a print stylesheet. The old hidden-frame method
+  printed the whole screen on Android and iOS.
+
+## [1.4.1] — 2026-11-12
+
+### Added
+
+* **Roles can be edited.** In Administration → Users & roles an administrator
+  can rename any role and tick which jobs a role may do. Administrator always
+  keeps everything and Auditor stays read-only. The database rules now let the
+  five working roles write all yard records, so the app's role settings decide
+  who does what; publish `firebase.rules.json` again.
+* Reports is now its own job ("See reports") instead of following payments.
+
+## [1.4.0] — 2026-11-12
+
+**Publish `firebase.rules.json` again after installing this version.** It adds
+two places in the database (shared settings and the shared activity log). Until
+it is published everything else still syncs; only those two stay per device.
+
+### Changed
+
+* **Each role sees only its own work.** The menu, the phone tab bar and the
+  dashboard now show a person just the screens their role uses: a gasifier
+  operator gets the gasifier and stock, accounts gets payments and reports, a
+  store keeper gets receiving and bags. A screen outside the role cannot be
+  opened by typing its address. The auditor still sees everything, read-only.
+* **"Waiting for you" on the dashboard.** A short list of the jobs that person
+  can act on now (trucks to accept, issues to approve or weigh, payments to
+  authorise or release, people waiting for a role), each one a tap away.
+* **Simpler staff management.** Users & roles explains every role in plain
+  words with the screens it opens, and the Add account form shows the same
+  while you choose.
+
+### Fixed — cloud sync
+
+* **An out-of-date device could overwrite newer records.** Sync now downloads
+  first; anything newer in the cloud replaces the device's copy and is removed
+  from its upload queue. Only then does the device upload.
+* **Cleared values came back.** When a newer record arrives, it replaces the
+  whole local record. Before, a bag returned to stock on one tablet kept its
+  old supplier, farmer and bay on the others.
+* **Roles never reached other devices.** Staff accounts are now downloaded on
+  every sync: a new person shows up for the administrator, a role change
+  reaches that person's device within a minute, and an account that is
+  switched off is signed out. An account added by email gets its role as soon
+  as the person first signs in.
+* **One refused upload stopped all syncing.** The activity log was being sent
+  to a place the database rules did not allow, which left devices stuck on
+  "Cloud access blocked". Each kind of record now syncs on its own; a refused
+  one stays safely queued and is retried on "Sync now".
+* **Two devices could issue the same receipt or payment number.** Running
+  numbers move past whatever arrives from the cloud, and a duplicate made
+  offline is renumbered (with a note of the old number) before it is uploaded.
+* **Only 4,000 of 5,000 newly numbered bags were uploaded.** The upload queue
+  no longer drops entries; large batches go up in parts.
+* **Deliveries from another device could fail to open** because the cloud
+  leaves out empty lists. Records are put back into shape on arrival.
+* An expired sign-in is refreshed and the sync retried, instead of being
+  reported as a rules problem.
+* A change made a split second before the tab was closed is now saved.
+* The screen refreshes when records arrive from another device, but not while
+  someone is typing or has a dialog open.
+* Background sync downloads the full data every two minutes instead of every
+  30 seconds (immediately when there is something to upload or on "Sync now").
+
+### Added
+
+* **Business settings are shared.** Prices, the fill agreement, the moisture
+  line and biomass types saved by an administrator reach every device.
+* **The activity log is shared.** Entries from every device are uploaded, and
+  Administration → Audit trail shows the latest 300 from all of them, with the
+  person's name and role.
+
 ## [1.3.1] — 2026-11-12
 
 ### Changed
@@ -11,6 +155,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and Other (timber off-cuts and the rest are gone). Add or remove types under
   Administration → Business settings, or with "Add another type" on the Receive
   biomass screen. Types already used by past deliveries stay on those records.
+
+* **The owner account is invisible to everyone else.** Administrators no longer
+  see it in Users & roles or in backups they download, the Subscription tab
+  stays owner-only, and screens say "an administrator" instead of "the owner".
+* **Activity log.** Sign-ins, sign-outs and every staff action are logged with
+  the person, device and time. The owner account leaves no entries, and any it
+  made earlier are no longer shown.
 
 ### Fixed
 

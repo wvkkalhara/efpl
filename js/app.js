@@ -11,28 +11,32 @@
   const D = window.Domain;
   const esc = UI.esc;
 
+  /* Each screen lists the permissions that make it part of someone's job
+     ("see"). A person only gets the screens for the work their role does:
+     a gasifier operator sees the gasifier, not the payments. The auditor's
+     read-everything permission (audit.read) opens every screen, read-only. */
   const NAV = [
     { group: 'Operations', items: [
       { id: 'dashboard', label: 'Dashboard', short: 'Home', icon: 'home' },
-      { id: 'intake', label: 'Receive biomass', short: 'Receive', icon: 'truckIn', perm: 'delivery.create' },
-      { id: 'deliveries', label: 'Deliveries', short: 'Deliveries', icon: 'list' },
-      { id: 'bays', label: 'Bays & stock', short: 'Stock', icon: 'warehouse' },
-      { id: 'gasifier', label: 'Gasifier issue', short: 'Gasifier', icon: 'flame' },
+      { id: 'intake', label: 'Receive biomass', short: 'Receive', icon: 'truckIn', see: ['delivery.create'] },
+      { id: 'deliveries', label: 'Deliveries', short: 'Deliveries', icon: 'list', see: ['delivery.create', 'delivery.accept', 'payment.split', 'payment.release', 'audit.read'] },
+      { id: 'bays', label: 'Bays & stock', short: 'Stock', icon: 'warehouse', see: ['bay.allocate', 'usage.request', 'audit.read'] },
+      { id: 'gasifier', label: 'Gasifier issue', short: 'Gasifier', icon: 'flame', see: ['usage.request', 'usage.approve', 'usage.consume', 'audit.read'] },
     ] },
     { group: 'Traceability', items: [
-      { id: 'bags', label: 'Bag registry', short: 'Bags', icon: 'tag' },
-      { id: 'trace', label: 'Trace a bag', short: 'Trace', icon: 'search' },
-      { id: 'quality', label: 'Quality issues', short: 'Quality', icon: 'alert' },
-      { id: 'returns', label: 'Bag returns', short: 'Returns', icon: 'returns' },
+      { id: 'bags', label: 'Bag registry', short: 'Bags', icon: 'tag', see: ['bag.generate', 'bag.issue', 'audit.read'] },
+      { id: 'trace', label: 'Trace a bag', short: 'Trace', icon: 'search', see: ['quality.report', 'audit.read'] },
+      { id: 'quality', label: 'Quality issues', short: 'Quality', icon: 'alert', see: ['quality.report', 'quality.resolve', 'audit.read'] },
+      { id: 'returns', label: 'Bag returns', short: 'Returns', icon: 'returns', see: ['returns.write', 'audit.read'] },
     ] },
     { group: 'Money', items: [
-      { id: 'payments', label: 'Payments', short: 'Payments', icon: 'wallet' },
-      { id: 'suppliers', label: 'Suppliers', short: 'Suppliers', icon: 'truck' },
-      { id: 'farmers', label: 'Farmers', short: 'Farmers', icon: 'leaf' },
+      { id: 'payments', label: 'Payments', short: 'Payments', icon: 'wallet', see: ['payment.split', 'payment.approve', 'payment.release', 'payment.pay', 'audit.read'] },
+      { id: 'suppliers', label: 'Suppliers', short: 'Suppliers', icon: 'truck', see: ['supplier.write', 'payment.release', 'audit.read'] },
+      { id: 'farmers', label: 'Farmers', short: 'Farmers', icon: 'leaf', see: ['farmer.write', 'payment.release', 'audit.read'] },
     ] },
     { group: 'Insight', items: [
-      { id: 'reports', label: 'Reports', short: 'Reports', icon: 'chart', perm: 'report.read' },
-      { id: 'admin', label: 'Administration', short: 'Admin', icon: 'settings' },
+      { id: 'reports', label: 'Reports', short: 'Reports', icon: 'chart', see: ['report.read', 'audit.read'] },
+      { id: 'admin', label: 'Administration', short: 'Admin', icon: 'settings', see: ['user.manage', 'settings.write', 'audit.read'] },
     ] },
   ];
   const NAV_ITEMS = NAV.flatMap((g) => g.items);
@@ -61,6 +65,57 @@
       });
       Sync.onChange(() => this.paintSyncChip());
       window.addEventListener('efpl:subscription-changed', () => this.render());
+
+      // An administrator changed this person's role on another device.
+      window.addEventListener('efpl:role-changed', () => {
+        if (!Auth.current()) return;
+        UI.closeAllLayers();
+        if (!Auth.isPending()) UI.toast(`Your role is now ${D.ROLE_LABEL[Auth.role()] || Auth.role()}`, 'ok', 6000);
+        if (!this.canSee(this.route)) this.route = 'dashboard';
+        this.render();
+      });
+      window.addEventListener('efpl:account-disabled', () => {
+        if (!Auth.current()) return;
+        UI.closeAllLayers();
+        Sync.stop(); Auth.logout('disabled'); this.render();
+        UI.toast('This account has been switched off by an administrator', 'danger', 8000);
+      });
+      // Records arrived from another device: redraw, but never under someone's fingers.
+      window.addEventListener('efpl:data-changed', () => {
+        if (!document.querySelector('.app-shell') || document.querySelector('.modal-backdrop')) return;
+        const view = document.getElementById('view');
+        const busy = view && view.contains(document.activeElement) && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+        // Reports and Administration redraw themselves (see _live) and keep their filters and tabs.
+        if (busy || this.route === 'intake' || this.route === 'admin' || this.route === 'reports') return;
+        const y = window.scrollY;
+        this.mountView();
+        window.scrollTo(0, y);
+      });
+      // Live screens (activity log, staff list) refresh themselves on every sync round.
+      window.addEventListener('efpl:live', () => {
+        if (!document.querySelector('.app-shell')) return;
+        // an administrator may have changed what this person's role can do
+        const sig = this.visibleScreens().join();
+        if (this._navSig && sig !== this._navSig && !document.querySelector('.modal-backdrop')) {
+          if (!this.canSee(this.route)) this.route = 'dashboard';
+          this.render();
+          return;
+        }
+        if (this._live) { try { this._live(); } catch (e) { console.error(e); } }
+      });
+      // Someone has just signed in for the first time and needs a role.
+      window.addEventListener('efpl:new-person', (e) => {
+        if (!Auth.can('user.manage')) return;
+        const names = (e.detail && e.detail.names) || [];
+        UI.toast(`${names.length === 1 ? `${names[0]} has` : `${names.length} people have`} signed in and need a role. Open Administration, Users & roles.`, 'warn', 12000);
+      });
+      window.addEventListener('efpl:renumbered', (e) => {
+        const n = (e.detail && e.detail.count) || 1;
+        UI.toast(`${n} record${n === 1 ? ' was' : 's were'} given a new number because another device had already used it. Check the receipt before printing.`, 'warn', 10000);
+      });
+      window.addEventListener('efpl:storage-full', () => {
+        UI.toast('This device is out of storage for the app. Sync, then download a backup and ask an administrator.', 'danger', 10000);
+      });
       // The single source of truth for page changes: the URL hash. Links,
       // the tab bar, the top-bar back button and the phone's own back
       // gesture all end up here, so they always agree.
@@ -79,6 +134,18 @@
     register(id, def) { this.routes[id] = def; },
 
     can(perm) { return !perm || Auth.can(perm); },
+
+    /** Is this screen part of the signed-in person's job? */
+    canSee(id) {
+      const item = NAV_ITEMS.find((i) => i.id === id);
+      if (!item) return false;
+      return !item.see || item.see.some((p) => Auth.can(p));
+    },
+    visibleScreens() { return NAV_ITEMS.filter((i) => this.canSee(i.id)).map((i) => i.id); },
+    /** Screen names a given role gets (used to explain roles to an administrator). */
+    screensForRole(role) {
+      return NAV_ITEMS.filter((i) => !i.see || i.see.some((p) => D.can({ role }, p))).map((i) => i.label);
+    },
 
     /** Go to a page. `after` runs once the page has been drawn. */
     navigate(id, after) {
@@ -124,8 +191,10 @@
     },
 
     tabs() {
-      const want = ['dashboard', this.can('delivery.create') ? 'intake' : 'deliveries', 'bays', 'payments'];
-      return want.map((id) => NAV_ITEMS.find((i) => i.id === id)).filter((i) => i && this.can(i.perm));
+      // Home plus the three screens this person uses most, in this order of preference.
+      const order = ['intake', 'gasifier', 'deliveries', 'bays', 'payments', 'bags', 'quality', 'suppliers', 'reports'];
+      const picked = order.filter((id) => this.canSee(id)).slice(0, 3);
+      return ['dashboard'].concat(picked).map((id) => NAV_ITEMS.find((i) => i.id === id));
     },
     isTabRoot(id) { return id === 'dashboard' || this.tabs().some((t) => t.id === id); },
 
@@ -158,7 +227,7 @@
       const user = Auth.current();
       const role = Auth.role();
       const nav = NAV.map((g) => {
-        const items = g.items.filter((i) => this.can(i.perm));
+        const items = g.items.filter((i) => this.canSee(i.id));
         if (!items.length) return '';
         return `<div class="nav-group">
           <span class="nav-group-label">${esc(g.group)}</span>
@@ -213,7 +282,8 @@
                 <div class="dropdown" id="user-dropdown" role="menu" hidden>
                   <div class="dropdown-head">${esc(user.email)}</div>
                   ${window.I18n ? window.I18n.switchHtml() : ''}
-                  <button data-menu="settings">${ico('settings')} Settings</button>
+                  <button data-menu="account">${ico('key')} My account and password</button>
+                  ${this.canSee('admin') ? `<button data-menu="settings">${ico('settings')} Administration</button>` : ''}
                   <button data-menu="backup">${ico('download')} Backup data</button>
                   <button data-menu="logout" class="danger-text">${ico('logout')} Sign out</button>
                 </div>
@@ -266,11 +336,16 @@
       if (!view) return;
       const def = this.routes[this.route] || this.routes.dashboard;
       if (!def) { view.innerHTML = UI.empty('Nothing here yet'); return; }
-      if (def.perm && !Auth.can(def.perm)) {
-        view.innerHTML = UI.empty('Not available for your role', 'Ask an administrator if you need access to this section.');
+      if ((def.perm && !Auth.can(def.perm)) || !this.canSee(this.route)) {
+        view.innerHTML = UI.empty('Not part of your role', 'This screen is not needed for your work. Ask an administrator if that should change.',
+          '<button class="nm-btn primary" data-home>Back to your dashboard</button>');
+        const home = view.querySelector('[data-home]');
+        if (home) home.addEventListener('click', () => this.navigate('dashboard'));
         return;
       }
       view.innerHTML = '';
+      this._live = null;                  // a screen that wants live refreshes sets this in render()
+      this._navSig = this.visibleScreens().join();
       view.classList.remove('view-enter');
       void view.offsetWidth;
       view.classList.add('view-enter');
@@ -352,7 +427,7 @@
               <button type="button" class="link" id="forgot">Forgot password</button>
               ${CFG.allowSelfRegistration ? '<button type="button" class="link" id="create-account">Create an account</button>' : ''}
             </div>
-            ${CFG.allowLocalPreview ? `<div class="preview-row">
+            ${Auth.demoEnabled() ? `<div class="preview-row">
               <button type="button" class="nm-btn block" id="preview-btn"><i class="i i-play"></i>Preview with demo data (no sign-in)</button>
               <p class="muted small">Opens the system as an Administrator with sample records. Nothing you change here is saved to the live database.</p>
             </div>` : ''}
@@ -398,9 +473,12 @@
         googleBtn.disabled = false;
         label.textContent = original;
         if (!res.ok) { UI.showErrors(form, [res.error]); return; }
-        UI.toast(Auth.isPending(res.user) ? 'Signed in — waiting for the owner to assign your role' : 'Welcome', Auth.isPending(res.user) ? 'warn' : 'ok', 5000);
+        UI.toast(Auth.isPending(res.user) ? 'Signed in. Waiting for an administrator to assign your role' : 'Welcome', Auth.isPending(res.user) ? 'warn' : 'ok', 5000);
+        if (window.VH) window.VH.audit('auth.login', 'user', res.user && res.user.email, 'Signed in with Google');
         this.enter();
-        if (!Auth.isPending()) Sync.start();
+        // Start syncing even while waiting for a role: it uploads the sign-up so
+        // an administrator sees this person, and listens for the role arriving.
+        Sync.start();
       });
 
       const createBtn = root.querySelector('#create-account');
@@ -431,6 +509,7 @@
           return;
         }
         UI.toast(res.mode === 'offline' ? 'Signed in offline — changes will sync later' : 'Welcome back', 'ok');
+        if (window.VH) window.VH.audit('auth.login', 'user', data.email, res.mode === 'offline' ? 'Signed in offline' : 'Signed in');
         this.enter();
         Sync.start();
       });
@@ -445,7 +524,7 @@
           <img src="assets/enerfab-logo.png" alt="" class="auth-logo" />
           <h1>Waiting for approval</h1>
           <p>You are signed in as <b>${esc(user.email)}</b>, but your role has not been set yet.</p>
-          <p class="muted small">The owner or an administrator gives you a role in
+          <p class="muted small">An administrator gives you a role in
             <b>Administration → Users &amp; roles</b>. Until then you can see nothing and change nothing — this page will let you in as soon as the role appears.</p>
           <div class="row-actions" style="justify-content:center">
             <button class="nm-btn primary" id="pending-check">Check again</button>
@@ -462,13 +541,16 @@
       if (signOut) signOut.addEventListener('click', () => { Auth.logout(); this.render(); });
 
       const check = async () => {
-        if (status) status.textContent = 'Checking…';
+        // Stop asking as soon as the person is in (or has signed out). Left
+        // running, this re-drew the whole app every 25 seconds for ever.
+        const waiting = () => Auth.current() && Auth.isPending(Auth.current());
+        if (!waiting()) { clearInterval(this._pendingTimer); return; }
+        if (status && status.isConnected) status.textContent = 'Checking…';
         await Sync.now('pending-check');
-        const user = Auth.current();
-        if (user && !Auth.isPending(user)) {
-          UI.toast('Your role has been set — welcome aboard', 'ok');
-          this.render();
-          Sync.start();
+        if (!waiting()) {
+          clearInterval(this._pendingTimer);
+          // the role-changed event has usually redrawn the app already
+          if (Auth.current() && !document.querySelector('.app-shell')) this.render();
           return;
         }
         if (status) status.textContent = navigator.onLine
@@ -486,7 +568,7 @@
     registerFlow() {
       UI.modal({
         title: 'Create a staff account',
-        body: `<p class="muted">Your account is created instantly and waits for the owner to give it a role. Choose a password you have not used elsewhere — it will also let you sign in on this device with no signal.</p>
+        body: `<p class="muted">Your account is created instantly and waits for an administrator to give it a role. Choose a password you have not used elsewhere — it will also let you sign in on this device with no signal.</p>
           <div class="form-errors" role="alert"></div>
           ${UI.field('Full name', UI.input('name', { placeholder: 'Nimal Silva' }))}
           ${UI.field('Work email', UI.input('email', { type: 'email', placeholder: 'name@efpl.org', autocomplete: 'username' }))}
@@ -508,7 +590,7 @@
             btn.disabled = false; btn.textContent = 'Create account';
             if (!res.ok) { box.classList.add('show'); box.innerHTML = `<ul><li>${esc(res.error)}</li></ul>`; return; }
             close();
-            UI.toast('Account created — waiting for the owner to approve it', 'warn', 6000);
+            UI.toast('Account created. Waiting for an administrator to approve it', 'warn', 6000);
             this.render();
           });
         },
@@ -575,14 +657,87 @@
       });
     },
 
+    /** Backup contents. Anyone but the owner gets a copy with the owner left out. */
+    exportData() {
+      const data = Store.exportJSON();
+      if (Auth.isSuper(Auth.current())) return data;
+      data.users = (data.users || []).filter((u) => !Auth.isSuper(u));
+      data.audit = (data.audit || []).filter((a) => !Auth.isOwnerEmail(a.by));
+      if (data.config && data.config.subscription) delete data.config.subscription.note;
+      return data;
+    },
+
+    /**
+     * "My account": who is signed in, the language, and the password.
+     * Anyone can open it, whatever their role. A person who joined with
+     * Google can create a password here; anyone can change theirs.
+     */
+    accountDialog() {
+      const user = Auth.current();
+      if (!user) return;
+      const demo = user.mode === 'preview';
+      const has = Auth.hasPassword();
+      UI.modal({
+        title: 'My account',
+        body: `
+          <div class="more-account">
+            <span class="avatar lg">${esc((user.name || user.email).slice(0, 1).toUpperCase())}</span>
+            <div><strong>${esc(user.name || user.email)}</strong><small>${esc(D.ROLE_LABEL[Auth.role()] || Auth.role())} · ${esc(user.email)}</small></div>
+          </div>
+          <h4>Language</h4>
+          ${window.I18n ? window.I18n.switchHtml() : ''}
+          <h4>${has ? 'Change your password' : 'Create a password'}</h4>
+          ${demo ? '<p class="muted">Passwords cannot be set in the demo.</p>' : `
+            <p class="muted small">${has
+              ? 'Your other devices will ask you to sign in again after the change.'
+              : `You joined with Google. With a password you can also sign in using <b>${esc(user.email)}</b> and the password, including on this device when there is no signal. Google sign-in keeps working.`}</p>
+            <div class="form-errors" role="alert"></div>
+            ${UI.field('New password', `<div class="pw-wrap">${UI.input('newPassword', { type: 'password', autocomplete: 'new-password', placeholder: 'At least 8 characters' })}
+              <button type="button" class="pw-toggle" id="acc-pw-toggle" aria-label="Show password"><i class="i i-eye"></i></button></div>`)}
+            ${UI.field('Type it again', UI.input('newPassword2', { type: 'password', autocomplete: 'new-password' }))}`}`,
+        footer: `<button class="nm-btn" data-close>Close</button>${demo ? '' : `<button class="nm-btn primary" data-act="save-pw">${has ? 'Change password' : 'Create password'}</button>`}`,
+        onMount: (el, close) => {
+          const toggle = el.querySelector('#acc-pw-toggle');
+          if (toggle) toggle.addEventListener('click', () => {
+            UI.$$('[name=newPassword], [name=newPassword2]', el).forEach((i) => { i.type = i.type === 'password' ? 'text' : 'password'; });
+          });
+          const save = el.querySelector('[data-act=save-pw]');
+          if (save) save.addEventListener('click', async () => {
+            const a = el.querySelector('[name=newPassword]').value;
+            const b = el.querySelector('[name=newPassword2]').value;
+            const errors = [];
+            if (a.length < 8) errors.push('Use at least 8 characters');
+            if (a !== b) errors.push('The two passwords are not the same');
+            UI.showErrors(el, errors);
+            if (errors.length) return;
+            save.disabled = true;
+            const label = save.textContent;
+            save.textContent = 'Saving…';
+            const res = await Auth.setPassword(a);
+            save.disabled = false;
+            save.textContent = label;
+            if (!res.ok) { UI.showErrors(el, [res.error]); return; }
+            if (window.VH) window.VH.audit('auth.password', 'user', user.email, has ? 'Password changed' : 'Password created');
+            UI.toast(has ? 'Password changed' : 'Password created. You can now sign in with your email and password too', 'ok', 6000);
+            close();
+          });
+        },
+      });
+    },
+
     menuAction(what) {
       if (what === 'logout') {
-        UI.whenSettled(() => { Sync.stop(); Auth.logout(); this.render(); });
+        UI.whenSettled(() => {
+          const me = Auth.current();
+          if (window.VH && me && me.mode !== 'preview') window.VH.audit('auth.logout', 'user', me.email, 'Signed out');
+          Sync.stop(); Auth.logout(); this.render();
+        });
         return;
       }
       if (what === 'settings') { this.navigate('admin'); return; }
+      if (what === 'account') { UI.whenSettled(() => this.accountDialog()); return; }
       if (what === 'backup') {
-        UI.download(`enerfab-biomass-backup-${D.todayISO()}.json`, JSON.stringify(Store.exportJSON(), null, 2));
+        UI.download(`enerfab-biomass-backup-${D.todayISO()}.json`, JSON.stringify(this.exportData(), null, 2));
         UI.toast('Backup downloaded', 'ok');
       }
     },
@@ -592,7 +747,7 @@
       const user = Auth.current();
       const role = Auth.role();
       const groups = NAV.map((g) => {
-        const items = g.items.filter((i) => this.can(i.perm));
+        const items = g.items.filter((i) => this.canSee(i.id));
         if (!items.length) return '';
         return `<section class="more-group">
           <h4>${esc(g.group)}</h4>
@@ -610,7 +765,7 @@
           </div>
           ${groups}
           <div class="more-actions">
-            ${window.I18n ? window.I18n.switchHtml() : ''}
+            <button class="nm-btn block" data-act="account">${ico('key')} My account and password</button>
             <button class="nm-btn block" data-act="backup">${ico('download')} Backup data</button>
             <button class="nm-btn block danger-ghost" data-act="logout">${ico('logout')} Sign out</button>
           </div>`,

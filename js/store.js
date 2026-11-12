@@ -46,6 +46,7 @@
     'usageRequests', 'qualityIssues', 'payments', 'bagReturns', 'audit', 'outbox',
   ];
 
+  const OUTBOX_CAP = 60000;   // 5 000 bags numbered in one go must all reach the cloud
   const nowISO = () => new Date().toISOString();
   const uid = (p = 'id') => `${p}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 9)}`;
 
@@ -86,6 +87,40 @@
     }
     return value;
   }
+
+  /* ------------------------- record shape guard -----------------------
+     The cloud database drops empty lists and empty values, so a record that
+     left this device as { allocations: [], avgFillPct: null } comes back
+     without those keys. normalize() puts the expected shape back so no
+     screen ever trips over a missing list. */
+  function normalize(coll, rec) {
+    if (!rec || typeof rec !== 'object') return rec;
+    const list = (k) => { if (!Array.isArray(rec[k])) rec[k] = rec[k] && typeof rec[k] === 'object' ? Object.values(rec[k]) : []; };
+    if (coll === 'deliveries') {
+      list('allocations'); list('farmerSplit'); list('serials');
+      if (rec.fillCheck && typeof rec.fillCheck === 'object') {
+        const f = rec.fillCheck;
+        if (!Array.isArray(f.fills)) f.fills = f.fills && typeof f.fills === 'object' ? Object.values(f.fills) : [];
+        if (f.avgFillPct === undefined) f.avgFillPct = null;
+        if (f.spread === undefined) f.spread = null;
+      }
+      if (!rec.status) rec.status = 'AWAITING_ACCEPTANCE';
+    }
+    if (coll === 'bagIssues') list('serials');
+    if (coll === 'payments') list('history');
+    if (coll === 'usageRequests' && rec.status === 'CONSUMED') { list('sampleBags'); list('bagSerials'); }
+    return rec;
+  }
+
+  /* Running numbers (RC-2026-0007, PAY-…) are counted on each device. After
+     records arrive from other devices the counters must move past them, or
+     two tablets would hand out the same receipt number. */
+  const NUMBERED = [
+    ['receipt', 'deliveries', 'receiptNo'], ['payment', 'payments', 'paymentNo'],
+    ['usage', 'usageRequests', 'requestNo'], ['quality', 'qualityIssues', 'issueNo'],
+    ['bagReturn', 'bagReturns', 'returnNo'], ['supplier', 'suppliers', 'code'], ['farmer', 'farmers', 'code'],
+  ];
+  const tailNumber = (v) => { const m = String(v || '').match(/(\d+)\s*$/); return m ? Number(m[1]) : 0; };
 
   /* The live records and the demo records live under different storage
      keys, so the no-password demo can never see or upload real data. */
@@ -157,7 +192,13 @@
       } else {
         this.data = blankDoc();
       }
-      for (const c of COLLECTIONS) this.data[c] = Array.isArray(this.data[c]) ? this.data[c].map((r) => clean(r)) : [];
+      for (const c of COLLECTIONS) {
+        this.data[c] = Array.isArray(this.data[c])
+          ? this.data[c].filter((r) => r && typeof r === 'object').map((r) => normalize(c, clean(r))) : [];
+      }
+      if (!this.data.counters || typeof this.data.counters !== 'object') this.data.counters = {};
+      if (!this.data.meta || typeof this.data.meta !== 'object') this.data.meta = blankDoc().meta;
+      this.bumpCounters();
       this.data.settings = Object.assign(blankDoc().settings, this.data.settings || {});
       this.data.config = deepMerge(blankDoc().config, this.data.config || {});
       return this.data;
@@ -191,7 +232,12 @@
     /** Synchronous flush — used before printing or on page hide. */
     flush() {
       clearTimeout(this._saveTimer);
-      if (persistence === 'localStorage') raw.set(storeKey(), JSON.stringify(this.data));
+      if (persistence === 'localStorage') {
+        try { raw.set(storeKey(), JSON.stringify(this.data)); } catch (e) {
+          if (String(e && e.name) === 'QuotaExceededError') window.dispatchEvent(new CustomEvent('efpl:storage-full'));
+          else console.error('Save failed', e);
+        }
+      }
       return this.data;
     },
 
@@ -236,6 +282,53 @@
       this.data.counters[name] = cur + 1;
       return cur;
     },
+    normalize,
+
+    /** Move every running number past the highest one already on record. */
+    bumpCounters() {
+      for (const [name, coll, field] of NUMBERED) {
+        let max = 0;
+        for (const r of this.data[coll] || []) max = Math.max(max, tailNumber(r[field]));
+        if ((this.data.counters[name] || 1) <= max) this.data.counters[name] = max + 1;
+      }
+    },
+
+    /**
+     * Two devices that were both offline can hand out the same number. When
+     * that shows up after a sync, the record still waiting in this device's
+     * upload queue (so nobody else has seen it yet) takes a fresh number and
+     * keeps a note of the old one. Returns how many were renumbered.
+     */
+    fixDuplicateNumbers() {
+      let fixed = 0;
+      const queued = new Set((this.data.outbox || []).map((o) => `${o.coll}:${o.id}`));
+      for (const [name, coll, field] of NUMBERED) {
+        const seen = new Map();
+        const rows = (this.data[coll] || []).slice().sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
+        for (const r of rows) {
+          const no = r[field];
+          if (!no) continue;
+          if (!seen.has(no)) { seen.set(no, r); continue; }
+          const first = seen.get(no);
+          // prefer to renumber the one only this device knows about
+          const victim = queued.has(`${coll}:${r.id}`) ? r : (queued.has(`${coll}:${first.id}`) ? first : null);
+          if (!victim) continue;
+          this.bumpCounters();
+          const n = this.nextSeq(name, 1);
+          const fresh = String(no).replace(/(\d+)\s*$/, (m) => String(n).padStart(m.length, '0'));
+          victim.renumberedFrom = no;
+          victim[field] = fresh;
+          victim.updatedAt = nowISO();
+          this.markDirty(coll, victim.id);
+          if (victim === first) seen.set(no, r);
+          // a payment keeps pointing at its delivery by id, so nothing else changes
+          fixed++;
+        }
+      }
+      if (fixed) this.save('renumber');
+      return fixed;
+    },
+
     nextCode(name, prefix, pad = 4) {
       return `${prefix}-${String(this.nextSeq(name, 1)).padStart(pad, '0')}`;
     },
@@ -246,7 +339,14 @@
       const existing = this.data.outbox.find((o) => o.coll === coll && o.id === id);
       if (existing) { existing.at = nowISO(); return; }
       this.data.outbox.push({ id: uid('ob'), coll, id, at: nowISO(), tries: 0 });
-      if (this.data.outbox.length > 4000) this.data.outbox.splice(0, 1000);
+      // Never drop queued changes: a truncated queue means records that
+      // silently never reach the cloud. The cap is only a last-resort guard.
+      if (this.data.outbox.length > OUTBOX_CAP) this.data.outbox.splice(0, this.data.outbox.length - OUTBOX_CAP);
+    },
+    /** Forget a queued upload (the cloud already holds something newer). */
+    clearDirty(coll, id) {
+      if (!this.data.outbox) return;
+      this.data.outbox = this.data.outbox.filter((o) => !(o.coll === coll && o.id === id));
     },
 
     add(coll, record, reason = 'add') {
@@ -287,8 +387,8 @@
         if (this.data.outbox) this.data.outbox.push({ id: uid('ob'), coll, id: rec.id, at: nowISO(), tries: 0 });
         out.push(rec);
       }
-      if (this.data.outbox && this.data.outbox.length > 4000) {
-        this.data.outbox.splice(0, this.data.outbox.length - 4000);
+      if (this.data.outbox && this.data.outbox.length > OUTBOX_CAP) {
+        this.data.outbox.splice(0, this.data.outbox.length - OUTBOX_CAP);
       }
       this.save(reason);
       return out;

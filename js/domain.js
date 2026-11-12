@@ -9,7 +9,7 @@
   /* ------------------------------ roles ------------------------------ */
   const ROLES = ['super_admin', 'admin', 'supervisor', 'storekeeper', 'operator', 'accounts', 'auditor', 'pending'];
 
-  const ROLE_LABEL = {
+  const DEFAULT_ROLE_LABEL = {
     super_admin: 'Super Admin (owner)',
     admin: 'Administrator',
     supervisor: 'Biomass Supervisor',
@@ -32,24 +32,112 @@
     supervisor: [
       'supplier.write', 'farmer.write', 'delivery.create', 'delivery.accept',
       'bay.allocate', 'bag.issue', 'usage.request', 'usage.approve', 'quality.report',
-      'quality.resolve', 'payment.split', 'payment.approve', 'returns.write', 'report.read', 'audit.read',
+      'quality.resolve', 'payment.split', 'payment.approve', 'returns.write', 'report.read',
     ],
     storekeeper: [
       'supplier.write', 'farmer.write', 'bag.generate', 'bag.issue', 'delivery.create',
-      'usage.request', 'quality.report', 'payment.split', 'returns.write', 'report.read',
+      'usage.request', 'quality.report', 'payment.split', 'returns.write',
     ],
-    operator: ['usage.request', 'usage.consume', 'quality.report', 'report.read'],
+    operator: ['usage.request', 'usage.consume', 'quality.report'],
     accounts: ['payment.release', 'payment.pay', 'report.read'],
     auditor: ['report.read', 'audit.read'],
     pending: [],   // signed in, but nothing is allowed until the owner assigns a role
   };
 
+  /** Plain-words summary shown when an administrator picks a role for someone. */
+  const ROLE_INFO = {
+    admin: 'Everything: all yard work, payments, people and their roles, prices and settings.',
+    supervisor: 'Accepts trucks and sets deductions, gives bays, approves gasifier issues, authorises payments, closes quality issues.',
+    storekeeper: 'Receives trucks, numbers and issues bags, enters the farmer declaration, checks returned bags, keeps suppliers and farmers.',
+    operator: 'Asks for biomass for the gasifier, weighs and feeds it, reports quality problems.',
+    accounts: 'Releases authorised payments to Head Office and marks them paid. Sees deliveries, suppliers and reports.',
+    auditor: 'Sees every screen and the activity log, and cannot change anything.',
+  };
+
   /** Roles an administrator is allowed to hand out (owner is special). */
   const ASSIGNABLE_ROLES = ROLES.filter((r) => r !== 'super_admin' && r !== 'pending');
 
+  /* ------------------------ editable roles ---------------------------
+     An administrator can rename a role and choose which jobs it may do
+     (Administration → Users & roles). The choices are saved with the shared
+     business settings, so every device follows them.
+
+     Two things are fixed on purpose:
+       - Administrator always keeps everything, so nobody can lock the
+         site out of its own settings;
+       - Auditor always stays read-only.
+     And three permissions can never be handed to another role: managing
+     people, changing settings, and reading the whole activity log. */
+  const TASKS = [
+    { perm: 'delivery.create', group: 'Receiving', label: 'Receive trucks (weigh, count, fill check)' },
+    { perm: 'delivery.accept', group: 'Receiving', label: 'Accept trucks, give bays and set deductions' },
+    { perm: 'bay.allocate', group: 'Receiving', label: 'Add bays' },
+    { perm: 'bag.generate', group: 'Bags', label: 'Number new bags' },
+    { perm: 'bag.issue', group: 'Bags', label: 'Issue bags to suppliers' },
+    { perm: 'returns.write', group: 'Bags', label: 'Check returned bags' },
+    { perm: 'usage.request', group: 'Gasifier', label: 'Ask for biomass for the gasifier' },
+    { perm: 'usage.approve', group: 'Gasifier', label: 'Approve gasifier issues and choose the bay' },
+    { perm: 'usage.consume', group: 'Gasifier', label: 'Weigh and feed the gasifier' },
+    { perm: 'quality.report', group: 'Quality', label: 'Report quality problems and trace bags' },
+    { perm: 'quality.resolve', group: 'Quality', label: 'Close quality problems' },
+    { perm: 'payment.split', group: 'Payments', label: 'Enter the farmer declaration' },
+    { perm: 'payment.approve', group: 'Payments', label: 'Authorise payments and change deductions' },
+    { perm: 'payment.release', group: 'Payments', label: 'Release payments to Head Office' },
+    { perm: 'payment.pay', group: 'Payments', label: 'Mark payments as paid' },
+    { perm: 'supplier.write', group: 'Records', label: 'Add and edit suppliers' },
+    { perm: 'farmer.write', group: 'Records', label: 'Add and edit farmers' },
+    { perm: 'report.read', group: 'Records', label: 'See reports' },
+  ];
+  const GRANTABLE = TASKS.map((t) => t.perm);
+  const LOCKED_ROLES = ['super_admin', 'admin', 'auditor', 'pending'];   // their permissions never change
+  const EDITABLE_ROLES = ROLES.filter((r) => !LOCKED_ROLES.includes(r));
+
+  /** What the administrator saved for the roles, or {} when nothing was changed. */
+  function roleSettings() {
+    try {
+      const s = window.Store && window.Store.settings && window.Store.settings();
+      return (s && s.roles && typeof s.roles === 'object') ? s.roles : {};
+    } catch { return {}; }
+  }
+
+  function permissionsFor(role) {
+    const base = PERMISSIONS[role] || [];
+    if (!EDITABLE_ROLES.includes(role)) return base;
+    const custom = roleSettings()[role];
+    // "perms" may come back from the cloud as a list or as {0: 'a', 1: 'b'}
+    const raw = custom && custom.perms;
+    const list = Array.isArray(raw) ? raw : (raw && typeof raw === 'object' ? Object.values(raw) : null);
+    if (!list) return custom && custom.none === true ? [] : base;
+    return list.filter((p) => GRANTABLE.includes(p));
+  }
+
+  const isRoleCustomised = (role) => EDITABLE_ROLES.includes(role) && !!(roleSettings()[role] && (roleSettings()[role].perms || roleSettings()[role].none));
+
+  function roleLabel(role) {
+    const custom = roleSettings()[role];
+    const name = custom && typeof custom.label === 'string' ? custom.label.trim() : '';
+    return (role !== 'super_admin' && role !== 'pending' && name) || DEFAULT_ROLE_LABEL[role] || role;
+  }
+
+  /** Reads like a plain object (D.ROLE_LABEL[role]) but follows the saved names. */
+  const ROLE_LABEL = new Proxy({}, {
+    get: (_t, role) => (typeof role === 'string' ? roleLabel(role) : undefined),
+    has: (_t, role) => role in DEFAULT_ROLE_LABEL,
+    ownKeys: () => Object.keys(DEFAULT_ROLE_LABEL),
+    getOwnPropertyDescriptor: (_t, role) => (role in DEFAULT_ROLE_LABEL ? { enumerable: true, configurable: true, value: roleLabel(role) } : undefined),
+  });
+
+  /** One sentence for a role: the built-in one, or the list of jobs once it has been edited. */
+  function roleSummary(role) {
+    if (!isRoleCustomised(role)) return ROLE_INFO[role] || '';
+    const mine = permissionsFor(role);
+    const jobs = TASKS.filter((t) => mine.includes(t.perm)).map((t) => t.label.replace(/\s*\(.*\)$/, ''));
+    return jobs.length ? jobs.join('. ') + '.' : 'Nothing yet. Tick the jobs this role should do.';
+  }
+
   function can(user, permission) {
     if (!user || !user.role) return false;
-    const list = PERMISSIONS[user.role] || [];
+    const list = permissionsFor(user.role);
     return list.includes('*') || list.includes(permission);
   }
 
@@ -346,7 +434,8 @@
   const todayISO = () => new Date().toISOString().slice(0, 10);
 
   window.Domain = {
-    ROLES, ASSIGNABLE_ROLES, ROLE_LABEL, PERMISSIONS, can,
+    ROLES, ASSIGNABLE_ROLES, ROLE_LABEL, DEFAULT_ROLE_LABEL, ROLE_INFO, PERMISSIONS, can,
+    TASKS, EDITABLE_ROLES, permissionsFor, isRoleCustomised, roleSummary,
     BAG_STATUS, BAG_STATUS_LABEL, BAG_TRANSITIONS, canTransition,
     round2, sampleSizeFor, evaluateFillCheck, moistureFromWeight, moistureBand,
     moistureCalibration, weightForMoisture, moistureHighPct, MOISTURE_LABEL, moistureTone, applyDeduction, suggestedDeduction,

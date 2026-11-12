@@ -34,6 +34,9 @@
     EMAIL_EXISTS: 'An account already exists with that email. Try signing in instead.',
     OPERATION_NOT_ALLOWED_: 'Email/password sign-in is switched off for this project.',
     NETWORK: 'No connection to Firebase — working offline.',
+    CREDENTIAL_TOO_OLD_LOGIN_AGAIN: 'For safety, sign out, sign in again, and then set the password straight away.',
+    TOKEN_EXPIRED: 'Your sign-in has expired. Sign out, sign in again, and then set the password.',
+    INVALID_ID_TOKEN: 'Your sign-in has expired. Sign out, sign in again, and then set the password.',
     PERMISSION_DENIED: 'The database rules do not allow this yet. Apply firebase.rules.json.',
     UNAUTHORIZED: 'Session expired — sign in again.',
   };
@@ -51,7 +54,11 @@
           ? String(body.error.message).replace(/^(EMAIL_NOT_FOUND|INVALID_LOGIN_CREDENTIALS|INVALID_PASSWORD|USER_DISABLED|TOO_MANY_ATTEMPTS_TRY_LATER)\s*:\s*/, (m, p) => { body.error.message = p; return ''; })
           : (res.status === 401 ? 'UNAUTHORIZED' : 'PERMISSION_DENIED');
         const code = (body && body.error && body.error.message) || (res.status === 401 ? 'UNAUTHORIZED' : 'PERMISSION_DENIED');
-        throw new FBError(FRIENDLY[code] || `Firebase error (${res.status})`, code, res.status);
+        const fbErr = new FBError(FRIENDLY[code] || `Firebase error (${res.status})`, code, res.status);
+        // The database answers { "error": "Permission denied" } or
+        // { "error": "Auth token is expired" } — the caller needs to tell them apart.
+        fbErr.detail = body && typeof body.error === 'string' ? body.error : '';
+        throw fbErr;
       }
       return body;
     } catch (e) {
@@ -115,6 +122,24 @@
         idToken: data.id_token,
         refreshToken: data.refresh_token,
         expiresAt: Date.now() + (Number(data.expires_in) || 3600) * 1000,
+      };
+    },
+
+    /**
+     * Give the signed-in account a password (or change it). For someone who
+     * joined with Google this adds a second way in: the same account can then
+     * also sign in with email + password, which is what works with no signal.
+     */
+    async setPassword(idToken, password) {
+      const data = await request(`${IDENTITY}:update?key=${CFG.apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idToken, password, returnSecureToken: true }),
+      });
+      return {
+        idToken: data.idToken || null,
+        refreshToken: data.refreshToken || null,
+        expiresAt: Date.now() + (Number(data.expiresIn) || 3600) * 1000,
       };
     },
 

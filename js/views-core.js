@@ -10,12 +10,23 @@
   /* ------------------------- shared view helpers --------------------- */
   const VH = {
     audit(action, entity, entityId, detail) {
+      // The activity log covers the staff. The owner account leaves no entries.
+      if (Auth.isSuper(Auth.current())) return;
+      const me = Auth.current() || {};
       Store.add('audit', {
         at: new Date().toISOString(),
-        by: (Auth.current() || {}).email || 'system',
-        action, entity, entityId, detail: String(detail || '').slice(0, 500),
+        by: String(me.email || 'system').toLowerCase(),
+        name: me.name || '', role: Auth.role(),
+        action, entity, entityId: String(entityId || ''), detail: String(detail || '').slice(0, 500),
         device: Store.data.meta.deviceId,
       }, 'audit');
+      // Keep the device copy to a size the tablet can hold; the cloud keeps it all.
+      const log = Store.data.audit;
+      if (log.length > 4000) {
+        const queued = new Set((Store.data.outbox || []).filter((o) => o.coll === 'audit').map((o) => o.id));
+        let drop = log.length - 3000;
+        Store.data.audit = log.filter((a) => (drop > 0 && !queued.has(a.id) ? (drop--, false) : true));
+      }
     },
     supplierOptions() {
       return Store.where('suppliers', (s) => !s.deleted && s.status !== 'INACTIVE')
@@ -55,6 +66,49 @@
       return out;
     },
 
+    /**
+     * The jobs waiting for the signed-in person. Each line is only added
+     * when their role can actually do that job, so a gasifier operator is
+     * never told about payments and accounts is never told about trucks.
+     */
+    myTasks() {
+      const out = [];
+      const n = (count, one, many) => `${count} ${count === 1 ? one : many}`;
+      const add = (perm, count, tone, text, nav) => { if (count > 0 && Auth.can(perm) && App.canSee(nav)) out.push({ tone, text, nav }); };
+      const deliveries = Store.all('deliveries').filter((d) => !d.deleted);
+      const usage = Store.all('usageRequests').filter((u) => !u.deleted);
+      const pays = Store.all('payments').filter((p) => !p.deleted);
+      const bags = Store.all('bags');
+      const count = (list, st) => list.filter((x) => x.status === st).length;
+      const sum = (st) => pays.filter((p) => p.status === st).reduce((a, p) => a + (p.netAmount || 0), 0);
+
+      const waiting = count(deliveries, 'AWAITING_ACCEPTANCE');
+      add('delivery.accept', waiting, 'warn', `${n(waiting, 'truck is', 'trucks are')} waiting to be accepted and given a bay`, 'deliveries');
+      const toApprove = count(usage, 'PENDING');
+      add('usage.approve', toApprove, 'warn', `${n(toApprove, 'gasifier request needs', 'gasifier requests need')} your approval`, 'gasifier');
+      const toWeigh = count(usage, 'APPROVED');
+      add('usage.consume', toWeigh, 'warn', `${n(toWeigh, 'approved issue is', 'approved issues are')} ready to weigh and feed to the gasifier`, 'gasifier');
+      const drafts = count(pays, 'DRAFT');
+      add('payment.split', drafts, 'warn', `${n(drafts, 'payment needs', 'payments need')} the farmer declaration`, 'payments');
+      const toAuth = count(pays, 'PENDING_SUPERVISOR');
+      add('payment.approve', toAuth, 'warn', `${n(toAuth, 'payment', 'payments')} to authorise, worth ${money(sum('PENDING_SUPERVISOR'))}`, 'payments');
+      const toRelease = count(pays, 'APPROVED');
+      add('payment.release', toRelease, 'info', `${n(toRelease, 'authorised payment', 'authorised payments')} to release to Head Office, worth ${money(sum('APPROVED'))}`, 'payments');
+      const toPay = count(pays, 'SENT_TO_HEAD_OFFICE');
+      add('payment.pay', toPay, 'info', `${n(toPay, 'payment is', 'payments are')} with Head Office, to mark as paid`, 'payments');
+      const openQ = count(Store.all('qualityIssues'), 'OPEN');
+      add('quality.resolve', openQ, 'danger', `${n(openQ, 'quality issue is', 'quality issues are')} open`, 'quality');
+      const empties = bags.filter((b) => b.status === 'CONSUMED' || b.status === 'RETURNED').length;
+      add('returns.write', empties, 'info', `${n(empties, 'empty bag', 'empty bags')} to check and return to the bag store`, 'returns');
+      const damaged = count(bags, 'DAMAGED');
+      add('returns.write', damaged, 'warn', `${n(damaged, 'bag is', 'bags are')} out for repair`, 'returns');
+      const inStore = count(bags, 'IN_STOCK');
+      if (bags.length && inStore < 50) add('bag.generate', 1, 'danger', `Only ${inStore} numbered bags left in the bag store`, 'bags');
+      const pendingUsers = Auth.listUsers().filter((u) => Auth.roleOf(u) === 'pending').length;
+      add('user.manage', pendingUsers, 'warn', `${n(pendingUsers, 'person is', 'people are')} waiting for you to give them a role`, 'admin');
+      return out;
+    },
+
     /* ----------------------------- biomass types ----------------------
        The list lives in settings so the site can add its own. */
     prettyType(id) {
@@ -74,7 +128,11 @@
           const was = old.find((t) => t && t.id === id);
           list.push({ id, label: was ? was.label : VH.prettyType(id) });
         }
-        Store.patchSettings({ biomassTypes: list, biomassTypesRev: 2 });
+        // Written without touching the "last changed" time: a tidy-up on one
+        // device must never count as newer than the settings an administrator saved.
+        s.biomassTypes = list;
+        s.biomassTypesRev = 2;
+        Store.save('types-migrate');
       }
       return (Store.settings().biomassTypes || []).filter((t) => t && t.id && t.label);
     },
@@ -208,13 +266,8 @@
 
       const bays = Store.where('bays', (b) => !b.deleted).map((b) => ({ ...b, count: VH.bagsInBay(b.id) }));
 
-      const alerts = [];
-      if (awaiting.length) alerts.push({ tone: 'warn', text: `${awaiting.length} ${awaiting.length === 1 ? 'truck is' : 'trucks are'} waiting to be accepted and allocated a bay`, nav: 'deliveries' });
-      if (pendingUsage.length) alerts.push({ tone: 'warn', text: `${pendingUsage.length} gasifier issue ${pendingUsage.length === 1 ? 'request needs' : 'requests need'} supervisor approval`, nav: 'gasifier' });
-      if (pendingPay.length) alerts.push({ tone: 'info', text: `${pendingPay.length} ${pendingPay.length === 1 ? 'payment' : 'payments'} in the pipeline, worth ${money(pendingValue)}`, nav: 'payments' });
-      if (openQuality.length) alerts.push({ tone: 'danger', text: `${openQuality.length} open quality ${openQuality.length === 1 ? 'issue' : 'issues'} traced to suppliers and farmers`, nav: 'quality' });
-      if (bagStore < 50) alerts.push({ tone: 'danger', text: `Only ${bagStore} empty bags left in the bag store — order replacements`, nav: 'returns' });
-      if (damaged) alerts.push({ tone: 'warn', text: `${damaged} damaged ${damaged === 1 ? 'bag' : 'bags'} awaiting repair or write-off`, nav: 'returns' });
+      // "Waiting for you": only the jobs this person's role can actually do.
+      const alerts = VH.myTasks();
 
       const capacity = bays.reduce((a, b) => a + (b.capacityBags || 0), 0);
       const yardPct = capacity ? Math.min(100, Math.round((stored.length / capacity) * 100)) : 0;
@@ -227,7 +280,9 @@
             <div class="hero-actions">
               ${Auth.can('delivery.create') ? '<button class="nm-btn primary" data-quick="intake"><i class="i i-plus"></i>Receive biomass</button>' : ''}
               ${Auth.can('usage.approve') ? '<button class="nm-btn" data-quick="gasifier"><i class="i i-flame"></i>Approve bay issue</button>' : ''}
-              ${Auth.can('report.read') ? '<button class="nm-btn" data-quick="reports"><i class="i i-chart"></i>Reports</button>' : ''}
+              ${!Auth.can('usage.approve') && (Auth.can('usage.consume') || Auth.can('usage.request')) ? `<button class="nm-btn ${Auth.can('delivery.create') ? '' : 'primary'}" data-quick="gasifier"><i class="i i-flame"></i>Gasifier issue</button>` : ''}
+              ${!Auth.can('delivery.create') && Auth.can('payment.release') ? '<button class="nm-btn primary" data-quick="payments">Payments</button>' : ''}
+              ${App.canSee('reports') ? '<button class="nm-btn" data-quick="reports"><i class="i i-chart"></i>Reports</button>' : ''}
             </div>
           </div>
           <div class="hero-yard">
@@ -238,21 +293,24 @@
           </div>
         </section>
 
-        ${alerts.length ? `<section class="alerts">${alerts.map((a) => `
-          <button class="alert-chip nm-card tone-${a.tone}" data-quick="${a.nav}">
-            <span class="alert-dot"></span><span>${esc(a.text)}</span>${UI.icon('chevron', 'chev')}
-          </button>`).join('')}</section>` : ''}
+        <section class="tasks">
+          <h3>Waiting for you</h3>
+          ${alerts.length ? `<div class="alerts">${alerts.map((a) => `
+            <button class="alert-chip nm-card tone-${a.tone}" data-quick="${a.nav}">
+              <span class="alert-dot"></span><span>${esc(a.text)}</span>${UI.icon('chevron', 'chev')}
+            </button>`).join('')}</div>` : '<p class="muted tasks-none">Nothing is waiting for you right now.</p>'}
+        </section>
 
         <section class="stats">
           ${UI.stat('Received, last 30 days', `${(netIn / 1000).toFixed(1)} t`, `${bagsIn.toLocaleString()} bags accepted`)}
           ${UI.stat('Into the gasifier, last 7 days', `${(kgOut / 1000).toFixed(2)} t`, `${bagsOut} bags weighed out`)}
-          ${UI.stat('Payments in progress', money(pendingValue), `${pendingPay.length} awaiting action`, pendingPay.length ? 'warn' : null)}
-          ${UI.stat('Empty bags in store', bagStore.toLocaleString(), `${damaged} damaged`, bagStore < 50 ? 'danger' : null)}
+          ${App.canSee('payments') ? UI.stat('Payments in progress', money(pendingValue), `${pendingPay.length} awaiting action`, pendingPay.length ? 'warn' : null) : ''}
+          ${App.canSee('returns') || App.canSee('bags') ? UI.stat('Empty bags in store', bagStore.toLocaleString(), `${damaged} damaged`, bagStore < 50 ? 'danger' : null) : ''}
         </section>
 
         <section class="cols-2">
           <div class="nm-card pad">
-            <div class="card-head"><h3>Stock by bay</h3><button class="link" data-quick="bays">Manage bays</button></div>
+            <div class="card-head"><h3>Stock by bay</h3>${App.canSee('bays') ? '<button class="link" data-quick="bays">Manage bays</button>' : ''}</div>
             ${bays.map((b) => {
               const pctFull = Math.min(100, Math.round((b.count / (b.capacityBags || 900)) * 100));
               return `<div class="bay-row">
@@ -263,7 +321,7 @@
           </div>
 
           <div class="nm-card pad">
-            <div class="card-head"><h3>Latest movements</h3><button class="link" data-quick="deliveries">All deliveries</button></div>
+            <div class="card-head"><h3>Latest movements</h3>${App.canSee('deliveries') ? '<button class="link" data-quick="deliveries">All deliveries</button>' : ''}</div>
             <ul class="timeline">
               ${movements().map((m) => `<li>
                 <span class="tl-dot tone-${m.tone}"></span>
@@ -274,7 +332,7 @@
           </div>
         </section>
 
-        <section class="nm-card pad quick-trace">
+        ${App.canSee('trace') ? `<section class="nm-card pad quick-trace">
           <div>
             <h3>Trace a bag</h3>
             <p class="muted">Type the number on the tag to see its supplier, farmer, bay and gasifier run.</p>
@@ -283,10 +341,11 @@
             <input class="nm-input" id="dash-trace-input" placeholder="${esc(Store.settings().bagSerialPrefix)}-000302" autocomplete="off" aria-label="Bag serial" />
             <button class="nm-btn primary" type="submit">Trace</button>
           </form>
-        </section>`;
+        </section>` : ''}`;
 
       UI.$$('[data-quick]', view).forEach((b) => b.addEventListener('click', () => App.navigate(b.dataset.quick)));
-      view.querySelector('#dash-trace').addEventListener('submit', (e) => {
+      const dashTrace = view.querySelector('#dash-trace');
+      if (dashTrace) dashTrace.addEventListener('submit', (e) => {
         e.preventDefault();
         const val = view.querySelector('#dash-trace-input').value.trim();
         App.navigate('trace', () => {
@@ -391,7 +450,10 @@
 
           <div class="intake-actions">
             <button type="button" class="nm-btn" id="cancel-intake">Clear</button>
-            <button type="submit" class="nm-btn primary">Register delivery</button>
+            <span class="intake-spacer"></span>
+            <button type="button" class="nm-btn" id="step-back">Back</button>
+            <button type="button" class="nm-btn primary" id="step-next">Next</button>
+            <button type="submit" class="nm-btn primary" id="step-submit">Register delivery</button>
           </div>
         </form>`;
 
@@ -493,8 +555,56 @@
         sel.value = type.id;
       }));
 
+      /* One step on screen at a time: who, weight, fill check, bags. */
+      const steps = UI.$$(':scope > section', form);
+      const STEP_NAMES = ['Supplier', 'Weight', 'Fill check', 'Bags'];
+      const stepper = document.createElement('ol');
+      stepper.className = 'stepper';
+      form.insertBefore(stepper, steps[0]);
+      let step = 0;
+      const checkStep = (i) => {
+        const d = UI.formData(form);
+        if (i === 0) {
+          if (!d.supplierId) return 'Choose who delivered the biomass';
+          if (!d.vehicleNo) return 'Enter the vehicle number';
+          if (!d.driverName) return 'Enter the driver name';
+        }
+        if (i === 1) {
+          const w = D.weighTruck(d.grossKg, d.tareKg);
+          if (!w.ok) return w.msg;
+          if (!d.bagCount || d.bagCount < 1) return 'Enter the number of bags counted';
+        }
+        if (i === 2 && d.outcome === 'OVERRIDE_FULL_PRICE' && !d.fillNote) return 'Write the reason for paying the full price';
+        return '';
+      };
+      const showStep = (i, quiet) => {
+        step = Math.max(0, Math.min(steps.length - 1, i));
+        steps.forEach((s, k) => { s.hidden = k !== step; });
+        stepper.innerHTML = steps.map((_, k) => `<li class="${k === step ? 'on' : k < step ? 'done' : ''}"><button type="button" data-step="${k}"><b>${k + 1}</b><span>${STEP_NAMES[k] || ''}</span></button></li>`).join('');
+        UI.$$('[data-step]', stepper).forEach((b) => b.addEventListener('click', () => goTo(Number(b.dataset.step))));
+        form.querySelector('#step-back').hidden = step === 0;
+        form.querySelector('#step-next').hidden = step === steps.length - 1;
+        form.querySelector('#step-submit').hidden = step !== steps.length - 1;
+        if (!quiet) window.scrollTo(0, 0);
+      };
+      const goTo = (target) => {
+        // going forward, every step on the way must be complete
+        for (let k = step; k < target; k++) {
+          const msg = checkStep(k);
+          if (msg) { showStep(k); UI.showErrors(form, [msg]); UI.toast(msg, 'warn'); return; }
+        }
+        UI.showErrors(form, []);
+        showStep(target);
+      };
+      form.querySelector('#step-next').addEventListener('click', () => goTo(step + 1));
+      form.querySelector('#step-back').addEventListener('click', () => goTo(step - 1));
+      form.querySelector('#cancel-intake').addEventListener('click', () => { UI.showErrors(form, []); showStep(0); });
+      showStep(0, true);
+
       form.addEventListener('submit', (e) => {
         e.preventDefault();
+        // Enter on the keyboard moves to the next step; only the last step registers.
+        if (step < steps.length - 1) { goTo(step + 1); return; }
         const data = UI.formData(form);
         const errors = [];
         if (!data.supplierId) errors.push({ field: 'Supplier', msg: 'Choose who delivered the biomass' });
@@ -506,7 +616,12 @@
         if (data.bagCount > Store.settings().maxBagsPerDelivery) errors.push({ field: 'Bags', msg: `More than ${Store.settings().maxBagsPerDelivery} bags — split the delivery` });
         if (data.outcome === 'OVERRIDE_FULL_PRICE' && !data.fillNote) errors.push({ field: 'Reason', msg: 'A written reason is required to override the price' });
         UI.showErrors(form, errors);
-        if (errors.length) { UI.toast(errors[0].msg, 'danger'); return; }
+        if (errors.length) {
+          const first = [0, 1, 2].find((k) => checkStep(k));
+          if (first !== undefined) showStep(first);
+          UI.toast(errors[0].msg, 'danger');
+          return;
+        }
 
         const validFills = fills.filter((n) => Number.isFinite(n));
         const fillCheck = D.evaluateFillCheck({

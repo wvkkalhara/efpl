@@ -410,8 +410,14 @@
      * used only when EFPL_CONFIG.allowLocalPreview is true (switch it off
      * for production) so the app can be shown on a device with no signal.
      */
-    previewSignIn() {
-      if (!CFG.allowLocalPreview) throw new Error('Preview sign-in is switched off');
+    /** Is the demo offered on this device? Off unless the owner switched it on. */
+    demoEnabled() {
+      const remote = (Store.space === 'live' && Store.data.config && Store.data.config.remote) || {};
+      return CFG.allowLocalPreview === true || remote.demoMode === true;
+    },
+
+    previewSignIn(force) {
+      if (!force && !Auth.demoEnabled()) throw new Error('The demo is switched off');
       // The demo runs in its own sandboxed store: it cannot see real records
       // left on this device, and nothing done in it is ever uploaded.
       Store.useSpace('demo');
@@ -437,7 +443,12 @@
     },
 
     /* --------------------------- user admin ------------------------- */
-    listUsers() { return Store.all('users').filter((u) => !u.deleted); },
+    /** The owner account is only ever listed for the owner. */
+    listUsers() {
+      const all = Store.all('users').filter((u) => !u.deleted);
+      return Auth.isSuper(session) ? all : all.filter((u) => !Auth.isSuper(u));
+    },
+    isOwnerEmail(email) { return isSuperEmail(email); },
 
     createUser({ email, name, role, active = true }) {
       if (!Auth.can('user.manage')) throw new Error('Not allowed');
@@ -462,6 +473,47 @@
       }
       if (patch.role && !window.Domain.ROLES.includes(patch.role)) throw new Error('Unknown role');
       return Store.update('users', id, patch, 'user-update');
+    },
+
+    /** Does this account already have a password (as far as this device knows)? */
+    hasPassword() {
+      if (!session) return false;
+      if (session.provider === 'password' || session.hasPassword === true) return true;
+      const p = Auth.profile();
+      return !!(p && p.hasPassword === true);
+    },
+
+    /**
+     * Create or change the password of the signed-in account. Someone who
+     * joined with "Continue with Google" can use this to get a password as
+     * well — handy for a shared tablet, and needed to sign in with no signal.
+     */
+    async setPassword(password) {
+      if (!session) return { ok: false, error: 'Sign in first.' };
+      if (session.mode === 'preview') return { ok: false, error: 'Passwords cannot be set in the demo.' };
+      const pw = String(password || '');
+      if (pw.length < 8) return { ok: false, error: 'Use at least 8 characters.' };
+      if (navigator.onLine === false) return { ok: false, error: 'Connect to the internet to set a password.' };
+      const token = await Auth.idToken();
+      if (!token) return { ok: false, error: 'Your sign-in has expired. Sign out, sign in again, and then set the password.' };
+      try {
+        const tok = await FB.setPassword(token, pw);
+        // Changing a password ends the account's other sign-ins, so keep the
+        // fresh ticket this call returned or this device would be signed out too.
+        if (tok.idToken) { session.idToken = tok.idToken; session.tokenExpiresAt = tok.expiresAt; }
+        if (tok.refreshToken) session.refreshToken = tok.refreshToken;
+        session.hasPassword = true;
+        persistSession();
+        const p = Auth.profile();
+        if (p) { p.hasPassword = true; Store.save('login'); }
+        await Auth.cacheOfflineCredential(String(session.email).toLowerCase(), pw);
+        return { ok: true };
+      } catch (err) {
+        if (err.code === 'NETWORK') return { ok: false, error: 'No connection. Try again when you are online.' };
+        if (/WEAK_PASSWORD/.test(String(err.code))) return { ok: false, error: 'That password is too weak. Use at least 8 characters.' };
+        if (/OPERATION_NOT_ALLOWED/.test(String(err.code))) return { ok: false, error: 'Email and password sign-in is switched off for this project. Ask the owner to turn it on in Firebase.' };
+        return { ok: false, error: err.message || 'The password could not be saved.' };
+      }
     },
 
     /* ----------------------- offline credential --------------------- */

@@ -8,7 +8,7 @@
    ===================================================================== */
 window.EFPL_CONFIG = {
   appName: 'EnerFab Biomass Storage',
-  version: '1.3.1',
+  version: '1.4.4',
   build: '2026.11',
 
   /* ---- Firebase project (efpl-2feb8) ---- */
@@ -36,7 +36,7 @@ window.EFPL_CONFIG = {
      opens the app as the owner WITHOUT contacting Firebase. It exists so
      the system can be demonstrated with no signal and no real accounts.
      SET THIS TO false BEFORE GO-LIVE.                                  */
-  allowLocalPreview: true,
+  allowLocalPreview: false,     // the owner can switch the demo on from Administration → Subscription
 
   /* ---- Ownership ---- */
   superAdminEmails: ['w.v.k.kalhara@gmail.com'],

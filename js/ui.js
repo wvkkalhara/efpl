@@ -35,6 +35,7 @@
     settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/>',
     grid: '<rect x="3" y="3" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="2"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="2"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
+    key: '<circle cx="8" cy="15" r="4"/><path d="m11 12 9-9"/><path d="m16 7 3 3"/><path d="m14 9 2 2"/>',
     back: '<path d="m15 18-6-6 6-6"/>',
     chevron: '<path d="m9 18 6-6-6-6"/>',
     x: '<path d="M18 6 6 18M6 6l12 12"/>',
@@ -281,44 +282,52 @@
     return [cols.join(','), ...rows.map((r) => cols.map((c) => escapeCell(r[c])).join(','))].join('\r\n');
   }
 
-  /** Print an arbitrary HTML block using a hidden iframe (keeps the app state). */
+  /**
+   * Print a document (receipt, bag labels, payment slip, statement, report).
+   *
+   * The page to print is placed in the app's own window and everything else
+   * is hidden for the printer by the stylesheet (see "#print-root" in
+   * app.css). A hidden frame looks tidier in code, but phones and tablets
+   * print the whole screen instead of the frame — and the receipt is printed
+   * from a tablet at the gate.
+   */
+  let printCleanup = null;
   function print(html, title = 'Print') {
-    const frame = document.createElement('iframe');
-    frame.setAttribute('title', title);
-    frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;';
-    document.body.appendChild(frame);
-    const doc = frame.contentWindow.document;
-    doc.open();
-    doc.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title>
-      <style>
-        @page { size: auto; margin: 10mm; }
-        *{box-sizing:border-box}
-        body{font-family:"Segoe UI",Roboto,Arial,sans-serif;color:#111;margin:0;padding:0;background:#fff}
-        .stats{display:flex;flex-wrap:wrap;gap:4mm;margin-bottom:4mm}
-        .stat{border:1px solid #bbb;padding:2mm 3mm;display:flex;flex-direction:column;font-size:9pt}
-        .stat-value{font-size:13pt}
-        button,.i{display:none}
-        .sheet{display:flex;flex-wrap:wrap;gap:6mm}
-        .sticker{width:70mm;border:1.2px solid #111;border-radius:3mm;padding:3mm;page-break-inside:avoid}
-        .sticker h3{margin:0 0 1mm;font-size:11pt;letter-spacing:.5px}
-        .sticker .serial{font-family:ui-monospace,Consolas,monospace;font-size:13pt;font-weight:700;letter-spacing:.5px}
-        .sticker .sub{font-size:7.5pt;color:#333;margin:1mm 0}
-        .sticker .write{border:1px dashed #555;border-radius:2mm;padding:2mm;margin-top:2mm;font-size:7pt;min-height:14mm}
-        .sticker .co{font-size:7pt;text-transform:uppercase;letter-spacing:1px;color:#187800;font-weight:700}
-        .sticker svg{display:block;margin:1mm 0}
-        table{width:100%;border-collapse:collapse;font-size:9pt}
-        th,td{border:1px solid #bbb;padding:1.5mm 2mm;text-align:left}
-        h1{font-size:14pt;margin:0 0 2mm}h2{font-size:11pt;margin:3mm 0 1mm}
-        .meta{font-size:9pt;color:#333}
-        .row{display:flex;justify-content:space-between}
-        .sign{margin-top:12mm;border-top:1px solid #111;width:60mm;font-size:8pt;padding-top:1mm}
-      </style></head><body>${html}</body></html>`);
-    doc.close();
-    frame.contentWindow.focus();
+    if (printCleanup) printCleanup();
+    const root = document.createElement('div');
+    root.id = 'print-root';
+    root.innerHTML = html;
+    // controls that were copied along with a screen section do not belong on paper
+    root.querySelectorAll('button, input, select, textarea, .i, .ico').forEach((n) => n.remove());
+    document.body.appendChild(root);
+
+    const pageTitle = document.title;
+    document.title = title;              // becomes the suggested file name for "Save as PDF"
+    let finished = false;
+    const done = () => {
+      if (finished) return;
+      finished = true;
+      printCleanup = null;
+      window.removeEventListener('afterprint', done);
+      document.title = pageTitle;
+      root.remove();
+    };
+    printCleanup = done;
+    window.addEventListener('afterprint', done);
+
+    // give the browser a moment to lay the page out (barcodes are inline SVG)
     setTimeout(() => {
-      try { frame.contentWindow.print(); } catch (e) { console.warn('Print blocked', e); }
-      setTimeout(() => frame.remove(), 60000);
-    }, 350);
+      try {
+        if (typeof window.print !== 'function') throw new Error('no print');
+        window.print();
+      } catch (e) {
+        console.warn('Print blocked', e);
+        toast('This browser would not open the print dialog. Use the browser menu → Print.', 'warn', 7000);
+      }
+      // Some browsers never say when printing ended: tidy up later either way.
+      setTimeout(done, 120000);
+    }, 200);
+    return root;
   }
 
   function debounce(fn, ms) {

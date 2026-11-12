@@ -88,6 +88,17 @@ function run() {
   check('sign-in screen offers Google (no console step needed)', () => !!window.document.querySelector('#google-btn'));
   check('sign-in screen offers self-service account creation', () => !!window.document.querySelector('#create-account'));
 
+  check('the demo button is hidden unless the owner turns it on', () => {
+    const wasDemo = Store.space === 'demo';
+    Store.useSpace('live');
+    const hidden = !Auth.demoEnabled();
+    Store.data.config.remote = Object.assign({}, Store.data.config.remote, { demoMode: true });
+    const shown = Auth.demoEnabled();
+    Store.data.config.remote.demoMode = false;
+    if (wasDemo) Store.useSpace('demo');
+    return hidden && shown && !window.document.querySelector('#preview-btn');
+  });
+
   results.push('\nSIGN IN');
   session();
   Auth.restore();
@@ -289,13 +300,27 @@ function run() {
     const stored = Store.all('bags').filter((b) => b.deliveryId === pending.id && b.status === 'STORED');
     return stored.length === Math.min(pending.bagCount, freeSerials.length);
   });
-  check('an audit entry was written', () => Store.all('audit').some((a) => a.action === 'delivery.accept' && a.entityId === pending.id));
-  check('audit entry records who did it', () => {
-    const a = Store.all('audit').filter((x) => x.action === 'delivery.accept').pop();
-    return a.by === 'w.v.k.kalhara@gmail.com';
+  check('the owner leaves no entry in the activity log', () => {
+    return !Store.all('audit').some((a) => a.by === 'w.v.k.kalhara@gmail.com');
   });
 
-  results.push('\nGASIFIER (requirements 5, 6)');
+  results.push('\nGASIFIER (requirements 5, 6) — done as an administrator');
+  session('admin', 'kasun.perera@efpl.org');
+  App.render();
+  check('an administrator does not see the owner in the staff list', () => {
+    return Store.all('users').some((u) => u.email === 'w.v.k.kalhara@gmail.com')
+      && !Auth.listUsers().some((u) => u.email === 'w.v.k.kalhara@gmail.com');
+  });
+  check('an administrator gets no Subscription tab', () => {
+    App.navigate('admin');
+    const tabs = [...window.document.querySelectorAll('[data-tab]')].map((b) => b.dataset.tab);
+    return tabs.includes('users') && tabs.includes('audit') && !tabs.includes('sub')
+      && !/Super Admin|owner/i.test(window.document.querySelector('#view').textContent);
+  });
+  check('a backup taken by an administrator leaves the owner out', () => {
+    const data = App.exportData();
+    return !JSON.stringify(data.users).includes('w.v.k.kalhara') && data.users.length > 0;
+  });
   const useReq = Store.all('usageRequests').find((u) => u.status === 'PENDING');
   check('an operator request is waiting for approval', () => !!useReq);
   closeModals();
@@ -317,10 +342,213 @@ function run() {
     const used = Store.all('bags').filter((b) => b.usageId === useReq.id);
     return used.length === after.bags && used.every((b) => b.status === 'CONSUMED');
   });
+  check('staff actions are logged with who did them', () => {
+    const a = Store.all('audit').filter((x) => x.action === 'usage.consume').pop();
+    return a && a.by === 'kasun.perera@efpl.org' && a.entityId === useReq.id
+      && Store.all('audit').some((x) => x.action === 'usage.approve' && x.by === 'kasun.perera@efpl.org');
+  });
   check('moisture at consumption follows the site formula', () => after.moisturePct === Domain.moistureFromWeight(after.avgBagKg, Store.settings()));
   check('consuming does not create duplicate bag serials', () => {
     const serials = Store.all('bags').map((b) => b.serial);
     return new Set(serials).size === serials.length && serials.length === 1200;
+  });
+
+  results.push('\nEACH ROLE SEES ONLY ITS OWN WORK');
+  const screensAs = (role, email) => { session(role, email); App.render(); return App.visibleScreens(); };
+  check('gasifier operator: gasifier and stock, no money, no receiving', () => {
+    const s2 = screensAs('operator', 'sunil.ops@efpl.org');
+    return s2.includes('gasifier') && s2.includes('bays') && s2.includes('quality')
+      && !s2.includes('payments') && !s2.includes('intake') && !s2.includes('suppliers') && !s2.includes('admin') && !s2.includes('reports');
+  });
+  check('the operator menu on screen matches', () => {
+    const shown = [...window.document.querySelectorAll('.sidebar [data-nav]')].map((b) => b.dataset.nav);
+    return shown.includes('gasifier') && !shown.includes('payments') && !shown.includes('admin');
+  });
+  check('a screen outside the role cannot be opened by its address', () => {
+    App.navigate('payments');
+    return /Not part of your role/.test(window.document.querySelector('#view').textContent);
+  });
+  check('operator is only told about gasifier work', () => {
+    const navs = window.VH.myTasks().map((t) => t.nav);
+    return navs.every((n) => ['gasifier', 'quality'].includes(n));
+  });
+  check('accounts: payments and reports, no receiving, no gasifier', () => {
+    const s2 = screensAs('accounts', 'accounts@efpl.org');
+    return s2.includes('payments') && s2.includes('reports') && s2.includes('deliveries')
+      && !s2.includes('intake') && !s2.includes('gasifier') && !s2.includes('bags') && !s2.includes('admin');
+  });
+  check('store keeper: receiving and bags, no reports, no administration', () => {
+    const s2 = screensAs('storekeeper', 'chaminda.raj@efpl.org');
+    return s2.includes('intake') && s2.includes('bags') && s2.includes('returns') && !s2.includes('reports') && !s2.includes('admin');
+  });
+  check('supervisor is told about trucks and authorisations', () => {
+    screensAs('supervisor', 'nimal.silva@efpl.org');
+    const navs = window.VH.myTasks().map((t) => t.nav);
+    return navs.includes('payments') && !navs.includes('admin');
+  });
+  check('supervisor has the yard and payments but not Administration', () => {
+    const s2 = screensAs('supervisor', 'nimal.silva@efpl.org');
+    return s2.includes('deliveries') && s2.includes('payments') && s2.includes('reports') && !s2.includes('admin');
+  });
+  check('auditor sees every screen except the receiving form', () => {
+    const s2 = screensAs('auditor', 'audit@efpl.org');
+    return s2.length === Object.keys(App.routes).length - 1 && !s2.includes('intake') && s2.includes('admin');
+  });
+  check('every role has a plain-words description', () => Domain.ASSIGNABLE_ROLES.every((r) => Domain.ROLE_INFO[r] && App.screensForRole(r).length > 1));
+
+  results.push('\nCLOUD SYNC (old data must never come back)');
+  session('admin', 'kasun.perera@efpl.org');
+  App.render();
+  const { Sync } = window;
+  const later = (ms) => new Date(Date.now() + ms).toISOString();
+  check('a newer cloud record replaces the local one and cancels the stale upload', () => {
+    const bag = Store.all('bags').find((b) => b.status === 'STORED' && b.farmerId);
+    Store.markDirty('bags', bag.id);                       // this device has an older edit queued
+    const cloud = { id: bag.id, serial: bag.serial, status: 'IN_STOCK', condition: 'GOOD', updatedAt: later(60000) };
+    Sync._mergeCollection('bags', { [bag.id]: cloud });
+    const after = Store.byId('bags', bag.id);
+    const stillQueued = Store.data.outbox.some((o) => o.coll === 'bags' && o.id === bag.id);
+    return after.status === 'IN_STOCK' && !('farmerId' in after) && !('bayId' in after) && !stillQueued;
+  });
+  check('an older cloud record does not overwrite a newer local one', () => {
+    const sup = Store.all('suppliers')[0];
+    Store.update('suppliers', sup.id, { phone: '077 000 0000' });
+    Sync._mergeCollection('suppliers', { [sup.id]: Object.assign({}, sup, { phone: 'OLD', updatedAt: '2020-01-01T00:00:00.000Z' }) });
+    return Store.byId('suppliers', sup.id).phone === '077 000 0000'
+      && Store.data.outbox.some((o) => o.coll === 'suppliers' && o.id === sup.id);
+  });
+  check('a delivery that comes back without its empty lists still opens', () => {
+    Sync._mergeCollection('deliveries', { del_cloud1: {
+      id: 'del_cloud1', receiptNo: 'RC-2026-0090', supplierId: Store.all('suppliers')[0].id, bagCount: 10, netKg: 200,
+      fillCheck: { decision: 'NOT_CHECKED', unitPrice: 300, amount: 3000 }, deliveredAt: later(0), updatedAt: later(0),
+    } });
+    const d = Store.byId('deliveries', 'del_cloud1');
+    closeModals();
+    App.openDelivery('del_cloud1');
+    const opened = /RC-2026-0090/.test(window.document.body.textContent);
+    closeModals();
+    return Array.isArray(d.allocations) && Array.isArray(d.fillCheck.fills) && d.fillCheck.avgFillPct === null && opened;
+  });
+  check('receipt numbers move past what other devices used', () => {
+    Store.bumpCounters();
+    return Store.data.counters.receipt === 91;
+  });
+  check('a number used twice while offline is renumbered before upload', () => {
+    const mine = Store.add('deliveries', { receiptNo: 'RC-2026-0090', supplierId: Store.all('suppliers')[0].id, bagCount: 5, status: 'AWAITING_ACCEPTANCE', deliveredAt: later(1000) });
+    const fixed = Store.fixDuplicateNumbers();
+    const nos = Store.all('deliveries').map((d) => d.receiptNo);
+    return fixed === 1 && mine.receiptNo === 'RC-2026-0091' && mine.renumberedFrom === 'RC-2026-0090' && new Set(nos).size === nos.length;
+  });
+  check('shared settings: the newest saved copy wins, an older one is ignored', () => {
+    Store.patchSettings({ unitPrice: 300 });
+    const ignored = Sync._mergeSettings({ unitPrice: 111, updatedAt: '2020-01-01T00:00:00.000Z' });
+    const taken = Sync._mergeSettings({ unitPrice: 320, reducedUnitPrice: 288, fillThresholdPct: 90, updatedAt: later(60000) });
+    const ok = ignored === 0 && taken === 1 && Store.settings().unitPrice === 320 && Store.settings().biomassTypes.length > 0;
+    Store.patchSettings({ unitPrice: 300, reducedUnitPrice: 270 });
+    return ok;
+  });
+  check('the owner role and "pending" are never uploaded as a role', () => {
+    return !('role' in Sync._cloudProfile({ email: 'a@b.c', role: 'super_admin' }))
+      && !('role' in Sync._cloudProfile({ email: 'a@b.c', role: 'pending' }))
+      && Sync._cloudProfile({ email: 'a@b.c', role: 'supervisor' }).role === 'supervisor';
+  });
+  check('numbering 5 000 bags queues every one of them for the cloud', () => {
+    const before = Store.data.outbox.length;
+    Store.bulkAdd('bags', Array.from({ length: 5000 }, (_, i) => ({ serial: `TEST-BG-${i}`, status: 'IN_STOCK' })));
+    const queued = Store.data.outbox.length - before;
+    Store.data.bags = Store.data.bags.filter((b) => !String(b.serial).startsWith('TEST-BG-'));
+    Store.data.outbox = Store.data.outbox.filter((o) => Store.byId(o.coll, o.id) || o.coll === 'settings');
+    return queued === 5000;
+  });
+
+  results.push('\nMY ACCOUNT');
+  session('storekeeper', 'chaminda.raj@efpl.org');
+  App.render();
+  check('every role can open My account, with a password form', () => {
+    closeModals();
+    App.accountDialog();
+    const m = window.document.querySelector('.modal-backdrop');
+    const ok = !!m && !!m.querySelector('[name=newPassword]') && !!m.querySelector('[data-act=save-pw]') && /chaminda\.raj@efpl\.org/.test(m.textContent);
+    closeModals();
+    return ok;
+  });
+  check('a Google account is offered "Create a password"', () => {
+    const s3 = JSON.parse(window.localStorage.getItem('efpl.session.v1'));
+    window.localStorage.setItem('efpl.session.v1', JSON.stringify(Object.assign(s3, { provider: 'google', mode: 'google' })));
+    Auth.restore();
+    closeModals();
+    App.accountDialog();
+    const txt = window.document.querySelector('.modal-backdrop').textContent;
+    closeModals();
+    return !Auth.hasPassword() && /Create a password/.test(txt) && /You joined with Google/.test(txt);
+  });
+
+  results.push('\nRECEIVE FORM (one step at a time)');
+  session('admin', 'kasun.perera@efpl.org');
+  App.render();
+  App.navigate('intake');
+  check('only the first step is shown, and it cannot be skipped empty', () => {
+    const f = window.document.querySelector('#intake-form');
+    const shown = () => [...f.querySelectorAll(':scope > section')].map((x) => (x.hidden ? 0 : 1)).join('');
+    const start = shown();
+    f.querySelector('#step-next').click();
+    return start === '1000' && shown() === '1000' && f.querySelector('#step-submit').hidden;
+  });
+  check('a complete step moves on, and the last step offers Register', () => {
+    const f = window.document.querySelector('#intake-form');
+    const put = (n, v) => { const e = f.querySelector(`[name=${n}]`); e.value = v; e.dispatchEvent(new window.Event('input', { bubbles: true })); };
+    const shown = () => [...f.querySelectorAll(':scope > section')].map((x) => (x.hidden ? 0 : 1)).join('');
+    put('supplierId', Store.all('suppliers')[0].id); put('vehicleNo', 'WP AB-1'); put('driverName', 'Driver');
+    f.querySelector('#step-next').click();
+    const two = shown();
+    put('grossKg', '5600'); put('tareKg', '2000'); put('bagCount', '100');
+    f.querySelector('#step-next').click(); f.querySelector('#step-next').click();
+    return two === '0100' && shown() === '0001' && !f.querySelector('#step-submit').hidden;
+  });
+
+  results.push('\nLIVE REPORTS AND PRINTING');
+  session('admin', 'kasun.perera@efpl.org');
+  App.render();
+  App.navigate('reports');
+  const rv = () => window.document.querySelector('#view');
+  const figures = () => [...rv().querySelectorAll('.stat-value')].map((x) => x.textContent).join('|');
+  check('reports open on the last 30 days with a chart', () => {
+    return rv().querySelector('[data-preset="30"]').classList.contains('active') && rv().querySelectorAll('path.rc-in').length > 0;
+  });
+  check('choosing a supplier changes every figure without leaving the page', () => {
+    const before = figures();
+    const sel = rv().querySelector('[name=rpSupplier]');
+    sel.value = Store.all('suppliers')[1].id;
+    sel.dispatchEvent(new window.Event('change', { bubbles: true }));
+    const changed = figures() !== before;
+    sel.value = '';
+    sel.dispatchEvent(new window.Event('change', { bubbles: true }));
+    return changed && figures() === before;
+  });
+  check('the report redraws by itself when new records arrive', () => {
+    const before = figures();
+    const d = Store.add('deliveries', { receiptNo: 'RC-2026-0500', supplierId: Store.all('suppliers')[0].id, bagCount: 100, netKg: 2000,
+      status: 'ACCEPTED', acceptedAt: new Date().toISOString(), deliveredAt: new Date().toISOString(), payableAmount: 30000 });
+    window.dispatchEvent(new window.CustomEvent('efpl:live'));
+    const changed = figures() !== before;
+    Store.data.deliveries = Store.data.deliveries.filter((x) => x.id !== d.id);
+    window.dispatchEvent(new window.CustomEvent('efpl:live'));
+    return changed && figures() === before;
+  });
+  check('printing puts the document in the print area, without buttons', () => {
+    const d = Store.all('deliveries').find((x) => x.receiptNo === 'RC-2026-0005');
+    App.printReceipt(d.id);
+    const root = window.document.getElementById('print-root');
+    const ok = !!root && /Biomass receipt/.test(root.textContent) && /RC-2026-0005/.test(root.textContent) && !root.querySelector('button');
+    window.dispatchEvent(new window.Event('afterprint'));
+    return ok && !window.document.getElementById('print-root');
+  });
+  check('bag labels print with a barcode each', () => {
+    const d = Store.all('deliveries').find((x) => x.receiptNo === 'RC-2026-0005');
+    App.printLabels(d.id);
+    const n = window.document.querySelectorAll('#print-root .sticker svg.barcode').length;
+    window.dispatchEvent(new window.Event('afterprint'));
+    return n > 0 && n <= 96;
   });
 
   results.push('\nSECURITY');

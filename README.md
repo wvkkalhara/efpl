@@ -73,7 +73,7 @@ A freshly signed-in account has **no permissions whatsoever** until a role is as
 | Accounts | `accounts@efpl.org` | Release to Head Office, mark paid |
 | Auditor | `audit@efpl.org` | Read-only |
 
-Sign-in is Firebase Authentication — Google first, email/password as an alternative. The Firebase SDK is fetched from Google's CDN **only** when the Google button is pressed; the rest of the app is entirely self-hosted. For a look around with no signal there is **Preview with demo data** (switch `allowLocalPreview` off in `js/config.js` before go-live).
+Sign-in is Firebase Authentication — Google first, email/password as an alternative. The Firebase SDK is fetched from Google's CDN **only** when the Google button is pressed; the rest of the app is entirely self-hosted. A demo with sample records is built in but hidden; the owner can show it from **Administration → Subscription → Demo mode**. Anyone can add a password to a Google account under **My account and password**.
 
 ---
 
