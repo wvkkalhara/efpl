@@ -257,7 +257,7 @@
               <div class="meter big"><span style="width:${pctFull}%"></span></div>
               <p class="muted small">${pctFull}% of ${(bay.capacityBags || 0).toLocaleString()} bag capacity${oldest && oldest.deliveredAt ? `, oldest from ${dOnly(oldest.deliveredAt)}` : ''}</p>
               ${avgKg ? `<p class="small">${VH.moistureBadge(D.moistureFromWeight(avgKg, s))} <span class="muted">at ${avgKg} kg per bag on arrival</span></p>` : ''}
-              <div class="chips">${Object.entries(byType).map(([t, n]) => `<span class="chip">${esc(((CFG.biomassTypes.find((x) => x.id === t) || {}).label) || t)} · ${n}</span>`).join('') || '<span class="muted small">Empty</span>'}</div>
+              <div class="chips">${Object.entries(byType).map(([t, n]) => `<span class="chip">${esc(VH.typeLabel(t))} · ${n}</span>`).join('') || '<span class="muted small">Empty</span>'}</div>
               <div class="bay-actions">
                 ${Auth.can('usage.request') ? `<button class="nm-btn tiny" data-issue="${bay.id}" ${bags.length ? '' : 'disabled'}><i class="i i-flame"></i>Request issue</button>` : ''}
                 <button class="nm-btn tiny" data-view="${bay.id}">View bags</button>

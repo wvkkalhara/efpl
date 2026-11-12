@@ -168,6 +168,22 @@ function run() {
   });
   check('no delivery in the demo is rejected', () => !Store.all('deliveries').some((d) => d.status === 'REJECTED'));
 
+  results.push('\nBIOMASS TYPES');
+  check('starts with Gliricidia, Cinnamon and Other', () => {
+    return window.VH.biomassTypes().map((t) => t.label).join(',') === 'Gliricidia,Cinnamon,Other';
+  });
+  check('a type can be added and is offered when receiving', () => {
+    const t = window.VH.addBiomassType('Ipil Ipil');
+    App.navigate('intake');
+    const offered = [...window.document.querySelectorAll('[name=biomassType] option')].map((o) => o.textContent);
+    return t.id === 'IPIL_IPIL' && offered.includes('Ipil Ipil') && !offered.includes('Timber off-cuts');
+  });
+  check('the same name cannot be added twice', () => !!window.VH.addBiomassType('ipil ipil').error);
+  check('a type can be removed again', () => {
+    window.VH.removeBiomassType('IPIL_IPIL');
+    return window.VH.biomassTypes().length === 3 && window.VH.typeLabel('IPIL_IPIL') === 'Ipil ipil';
+  });
+
   results.push('\nBAG SERIALS (the WhatsApp decision)');
   check('parses a hyphenated range', () => {
     const list = window.VH.parseSerials('EFPL-BG-000301-000310', 'EFPL-BG');

@@ -26,7 +26,7 @@
     ['A. Rathnayake', '198022334455', '072 331 6678', 'Galgamuwa'],
     ['N. Perera', '750998877V', '070 556 3321', 'Anuradhapura'],
     ['H. Dissanayake', '880123456V', '077 660 9921', 'Kurunegala'],
-    ['J. Silva Timber Works', '941122334V', '071 889 0034', 'Mahawa'],
+    ['J. Silva & Sons', '941122334V', '071 889 0034', 'Mahawa'],
   ];
 
   const FARMERS = [
@@ -136,7 +136,7 @@
 
     // 2) 180 bags, fill check failed -> reduced price, awaiting supervisor.
     const d2 = Store.add('deliveries', {
-      receiptNo: 'RC-2026-0002', supplierId: suppliers[1].id, biomassType: 'IPIL_IPIL',
+      receiptNo: 'RC-2026-0002', supplierId: suppliers[1].id, biomassType: 'GLIRICIDIA',
       vehicleNo: 'NW JD-7788', driverName: 'S. Fernando', driverNic: '823456789X',
       grossKg: 5900, tareKg: 2050, netKg: 3850, bagCount: 180,
       fillCheck: D.evaluateFillCheck({ bagCount: 180, fills: [82, 85, 86, 83, 84, 87], settings }),
@@ -152,7 +152,7 @@
 
     // 3) 240 bags in bay 4, paid and sent to Head Office.
     const d3 = Store.add('deliveries', {
-      receiptNo: 'RC-2026-0003', supplierId: suppliers[3].id, biomassType: 'COCONUT_SHELL',
+      receiptNo: 'RC-2026-0003', supplierId: suppliers[3].id, biomassType: 'CINNAMON',
       vehicleNo: 'CP KA-1290', driverName: 'M. Farook', driverNic: '901234567V',
       grossKg: 7300, tareKg: 2210, netKg: 5090, bagCount: 240,
       fillCheck: D.evaluateFillCheck({ bagCount: 240, fills: [99, 97, 98, 100], settings }),
@@ -167,7 +167,7 @@
 
     // 4) Today: truck waiting, not yet accepted.
     Store.add('deliveries', {
-      receiptNo: 'RC-2026-0004', supplierId: suppliers[6].id, biomassType: 'TIMBER_OFFCUT',
+      receiptNo: 'RC-2026-0004', supplierId: suppliers[6].id, biomassType: 'CINNAMON',
       vehicleNo: 'NW PB-3311', driverName: 'H. Dissanayake', driverNic: '880123456V',
       grossKg: 6450, tareKg: 1900, netKg: 4550, bagCount: 200,
       fillCheck: D.evaluateFillCheck({ bagCount: 200, fills: [93, 91, 88], settings }),
@@ -179,7 +179,7 @@
     // 5) A wet load. Nothing is sent back: it is received and 10% is deducted.
     const wet = D.applyDeduction(160, 300, 10);
     const d5 = Store.add('deliveries', {
-      receiptNo: 'RC-2026-0005', supplierId: suppliers[4].id, biomassType: 'MIXED',
+      receiptNo: 'RC-2026-0005', supplierId: suppliers[4].id, biomassType: 'OTHER',
       vehicleNo: 'NW GH-9021', driverName: 'A. Rathnayake', driverNic: '198022334455',
       grossKg: 6900, tareKg: 2000, netKg: 4900, bagCount: 160,
       fillCheck: D.evaluateFillCheck({ bagCount: 160, fills: [93, 95, 92], settings }),

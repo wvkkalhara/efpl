@@ -8,7 +8,7 @@
    ===================================================================== */
 window.EFPL_CONFIG = {
   appName: 'EnerFab Biomass Storage',
-  version: '1.3.0',
+  version: '1.3.1',
   build: '2026.11',
 
   /* ---- Firebase project (efpl-2feb8) ---- */
@@ -70,11 +70,10 @@ window.EFPL_CONFIG = {
   },
 
   biomassTypes: [
-    { id: 'GLIRICIDIA', label: 'Gliricidia', rateFactor: 1.0 },
-    { id: 'IPIL_IPIL', label: 'Ipil Ipil', rateFactor: 1.0 },
-    { id: 'CINNAMON', label: 'Cinnamon waste', rateFactor: 0.95 },
-    { id: 'TIMBER_OFFCUT', label: 'Timber off-cuts', rateFactor: 1.05 },
-    { id: 'COCONUT_SHELL', label: 'Coconut shell', rateFactor: 1.15 },
-    { id: 'MIXED', label: 'Mixed / other approved', rateFactor: 0.95 },
+    // The starting list. More are added in the app (Receive biomass, or
+    // Administration → Business settings) — no code change needed.
+    { id: 'GLIRICIDIA', label: 'Gliricidia' },
+    { id: 'CINNAMON', label: 'Cinnamon' },
+    { id: 'OTHER', label: 'Other' },
   ],
 };

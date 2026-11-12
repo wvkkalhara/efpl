@@ -46,7 +46,7 @@ function headers(ext) {
       "img-src 'self' data:",
       "style-src 'self' 'unsafe-inline'",
       "script-src 'self' https://www.gstatic.com https://apis.google.com https://accounts.google.com",
-      "connect-src 'self' https://*.firebaseio.com wss://*.firebaseio.com https://*.googleapis.com https://*.firebaseapp.com",
+      "connect-src 'self' https://www.gstatic.com https://*.firebaseio.com wss://*.firebaseio.com https://*.googleapis.com https://*.firebaseapp.com",
       "frame-src https://*.firebaseapp.com https://accounts.google.com",
       "form-action 'self'",
       "base-uri 'self'",

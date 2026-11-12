@@ -55,6 +55,76 @@
       return out;
     },
 
+    /* ----------------------------- biomass types ----------------------
+       The list lives in settings so the site can add its own. */
+    prettyType(id) {
+      const s = String(id || '').replace(/_/g, ' ').toLowerCase();
+      return s ? s.charAt(0).toUpperCase() + s.slice(1) : '—';
+    },
+    biomassTypes() {
+      const s = Store.settings();
+      if (s.biomassTypesRev !== 2) {
+        // One-time move from the old built-in list: start from the site's two
+        // types and keep any other type that deliveries already use.
+        const list = CFG.biomassTypes.map((t) => ({ id: t.id, label: t.label }));
+        const old = Array.isArray(s.biomassTypes) ? s.biomassTypes : [];
+        for (const d of Store.all('deliveries')) {
+          const id = d.biomassType;
+          if (!id || list.some((t) => t.id === id)) continue;
+          const was = old.find((t) => t && t.id === id);
+          list.push({ id, label: was ? was.label : VH.prettyType(id) });
+        }
+        Store.patchSettings({ biomassTypes: list, biomassTypesRev: 2 });
+      }
+      return (Store.settings().biomassTypes || []).filter((t) => t && t.id && t.label);
+    },
+    typeLabel(id) {
+      const t = VH.biomassTypes().find((x) => x.id === id);
+      return t ? t.label : VH.prettyType(id);
+    },
+    /** Returns the new type, or { error } when the name is empty or taken. */
+    addBiomassType(name) {
+      const label = String(name || '').trim().replace(/\s+/g, ' ').slice(0, 40);
+      if (!label) return { error: 'Type a name for the biomass type' };
+      const list = VH.biomassTypes();
+      if (list.some((t) => t.label.toLowerCase() === label.toLowerCase())) return { error: `${label} is already in the list` };
+      let id = label.toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '') || `TYPE_${Date.now().toString(36).toUpperCase()}`;
+      while (list.some((t) => t.id === id)) id += '_2';
+      const type = { id, label };
+      Store.patchSettings({ biomassTypes: list.concat([type]) });
+      VH.audit('settings.type.add', 'settings', id, `Biomass type added: ${label}`);
+      return type;
+    },
+    removeBiomassType(id) {
+      const list = VH.biomassTypes();
+      if (list.length <= 1) return { error: 'Keep at least one biomass type' };
+      const t = list.find((x) => x.id === id);
+      Store.patchSettings({ biomassTypes: list.filter((x) => x.id !== id) });
+      VH.audit('settings.type.remove', 'settings', id, `Biomass type removed: ${t ? t.label : id}`);
+      return {};
+    },
+    /** Small dialog used from Receive biomass and from settings. */
+    addTypeDialog(onAdded) {
+      UI.modal({
+        title: 'Add a biomass type',
+        size: 'sm',
+        body: `<div class="form-errors" role="alert"></div>
+          ${UI.field('Name', UI.input('typeName', { placeholder: 'Ipil Ipil, coconut shell…' }), 'It appears in the list when a truck is received.')}`,
+        footer: '<button class="nm-btn" data-close>Cancel</button><button class="nm-btn primary" data-act="add">Add type</button>',
+        onMount(el, close) {
+          const go = () => {
+            const res = VH.addBiomassType(el.querySelector('[name=typeName]').value);
+            if (res.error) { UI.showErrors(el, [res.error]); return; }
+            UI.toast(`${res.label} added`, 'ok');
+            close();
+            if (onAdded) onAdded(res);
+          };
+          el.querySelector('[data-act=add]').addEventListener('click', go);
+          el.querySelector('[name=typeName]').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); go(); } });
+        },
+      });
+    },
+
     /** Money actually payable for a delivery (after any deduction). */
     payable(d) {
       if (!d) return 0;
@@ -273,7 +343,8 @@
               <p class="muted small">Supplier and vehicle details. Farmers are attached to the supplier, not to the truck.</p></div></div>
             <div class="grid-3">
               ${UI.field('Supplier', UI.select('supplierId', VH.supplierOptions(), { required: true, placeholder: 'Select supplier…' }))}
-              ${UI.field('Biomass type', UI.select('biomassType', CFG.biomassTypes.map((t) => ({ value: t.id, label: t.label })), { required: true }))}
+              ${UI.field('Biomass type', UI.select('biomassType', VH.biomassTypes().map((t) => ({ value: t.id, label: t.label })), { required: true }),
+                Auth.can('settings.write') ? '<button type="button" class="link" id="add-type"><i class="i i-plus"></i>Add another type</button>' : '')}
               ${UI.field('Vehicle number', UI.input('vehicleNo', { placeholder: 'WP LH-4521', required: true }))}
               ${UI.field('Driver name', UI.input('driverName', { placeholder: 'Full name', required: true }))}
               ${UI.field('Driver NIC', UI.input('driverNic', { placeholder: '781234567V' }))}
@@ -412,6 +483,16 @@
 
       renderFillInputs(); updateWeigh(); updateFill(); updateSerials();
 
+      const addType = form.querySelector('#add-type');
+      if (addType) addType.addEventListener('click', () => VH.addTypeDialog((type) => {
+        // add the new type to the list in place, so nothing already typed is lost
+        const sel = form.querySelector('[name=biomassType]');
+        const opt = document.createElement('option');
+        opt.value = type.id; opt.textContent = type.label;
+        sel.appendChild(opt);
+        sel.value = type.id;
+      }));
+
       form.addEventListener('submit', (e) => {
         e.preventDefault();
         const data = UI.formData(form);
@@ -511,7 +592,7 @@
     },
   });
 
-  const typeLabel = (id) => ((CFG.biomassTypes.find((t) => t.id === id) || {}).label || id || '—');
+  const typeLabel = (id) => VH.typeLabel(id);
 
   function fillBadge(r) {
     const f = r.fillCheck;

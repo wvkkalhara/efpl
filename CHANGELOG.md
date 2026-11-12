@@ -3,6 +3,23 @@
 All notable changes to the EnerFab Biomass Storage system.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.3.1] — 2026-11-12
+
+### Changed
+
+* **Biomass types are now your own list.** It starts with Gliricidia, Cinnamon
+  and Other (timber off-cuts and the rest are gone). Add or remove types under
+  Administration → Business settings, or with "Add another type" on the Receive
+  biomass screen. Types already used by past deliveries stay on those records.
+
+### Fixed
+
+* Cloud sync stopped with "Cloud access blocked" (401 on `users`) for the owner:
+  the app sent the owner's profile with the role `super_admin`, which the
+  database rules do not accept as a role value. The owner's role is no longer
+  sent; owner rights come from the verified email.
+* Content-Security-Policy now lets DevTools fetch Firebase's source maps.
+
 ## [1.3.0] — 2026-11-12
 
 ### Changed

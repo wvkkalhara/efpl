@@ -993,6 +993,10 @@
               ${UI.field('Head Office email', UI.input('headOfficeEmail', { type: 'email', value: s.headOfficeEmail }))}
             </div>
 
+            <h4>Biomass types</h4>
+            <p class="muted">The kinds of biomass a supplier can deliver. They appear in the list on the Receive biomass screen.</p>
+            <div class="type-list" id="type-list"></div>
+
             <h4>Moisture from bag weight</h4>
             <p class="muted">Moisture is read from the bag weight on a straight line through two weighed points. The site line is 18 kg = 20% and 36 kg = 60%, which is moisture % = (40 ÷ 18) × kg − 20.</p>
             <div class="grid-4">
@@ -1169,6 +1173,32 @@
           };
           UI.$$('[name^=moistureCal]', body).forEach((i) => i.addEventListener('input', preview));
           preview();
+
+          const drawTypes = () => {
+            const types = VH.biomassTypes();
+            const inUse = (id) => Store.where('deliveries', (d) => d.biomassType === id).length;
+            const box = body.querySelector('#type-list');
+            box.innerHTML = types.map((t) => {
+              const n = inUse(t.id);
+              return `<span class="type-chip">${UI.icon('leaf')}<span><b>${esc(t.label)}</b><small>${n ? `${n} ${n === 1 ? 'delivery' : 'deliveries'}` : 'not used yet'}</small></span>
+                ${types.length > 1 ? `<button type="button" class="type-x" data-rm-type="${esc(t.id)}" aria-label="Remove ${esc(t.label)}">${UI.icon('x')}</button>` : ''}</span>`;
+            }).join('') + `<button type="button" class="type-chip type-add" id="type-add">${UI.icon('plus')}<span><b>Add a type</b></span></button>`;
+            box.querySelector('#type-add').addEventListener('click', () => VH.addTypeDialog(drawTypes));
+            UI.$$('[data-rm-type]', box).forEach((b) => b.addEventListener('click', async () => {
+              const t = types.find((x) => x.id === b.dataset.rmType);
+              const n = inUse(t.id);
+              const ok = await UI.confirm({
+                title: `Remove ${t.label}?`, confirmText: 'Remove',
+                message: n ? `${n} past ${n === 1 ? 'delivery keeps' : 'deliveries keep'} this type on record. It just stops being offered for new trucks.`
+                  : 'It will no longer be offered when a truck is received.',
+              });
+              if (!ok) return;
+              const res = VH.removeBiomassType(t.id);
+              if (res.error) UI.toast(res.error, 'warn'); else UI.toast(`${t.label} removed`, 'ok');
+              drawTypes();
+            }));
+          };
+          drawTypes();
 
           body.querySelector('#save-settings').addEventListener('click', () => {
             if (!Auth.can('settings.write')) return UI.toast('Only an administrator can change settings', 'danger');

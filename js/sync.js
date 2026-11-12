@@ -142,7 +142,11 @@
             const profile = { email: rec.email, name: rec.name, active: rec.active !== false, updatedAt: rec.updatedAt };
             // The rules only accept a real role, and only the owner/an admin may
             // write it. A person waiting for approval simply has no role yet.
-            if (rec.role && rec.role !== 'pending') profile.role = rec.role;
+            // The owner is recognised by the verified email in the rules, never by
+            // a stored role — the rules reject "super_admin" as a role value, and
+            // one rejected record makes the whole request fail with a 401.
+            if (rec.role && rec.role !== 'pending' && rec.role !== 'super_admin') profile.role = rec.role;
+            if (typeof profile.name !== 'string') delete profile.name;
             byUid[rec.uid] = profile;
           }
           if (Object.keys(byUid).length) await FB.patch('users', byUid, token);
@@ -154,7 +158,7 @@
       } catch (err) {
         if (err.code === 'NETWORK') { set({ phase: 'offline' }); break; }
         if (err.status === 401) {
-          set({ phase: 'blocked', lastError: 'Write refused by the database rules (401). Publish firebase.rules.json.' });
+          set({ phase: 'blocked', lastError: `The database rules refused a write to "${coll}" (401). Check that firebase.rules.json is published and that your role may write this.` });
           break;
         }
         for (const it of items) it.tries = (it.tries || 0) + 1;

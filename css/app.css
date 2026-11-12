@@ -675,6 +675,27 @@ select.nm-input.attention { border-color: var(--amber); box-shadow: 0 0 0 3px rg
 .or-sep { display: flex; align-items: center; gap: 10px; margin: 16px 0 14px; color: var(--ink-3); font-size: .82rem; }
 .or-sep::before, .or-sep::after { content: ''; flex: 1 1 auto; height: 1px; background: var(--line); }
 
+/* --------------------------- biomass types ------------------------- */
+.type-list { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 8px; }
+.type-chip {
+  display: inline-flex; align-items: center; gap: 10px; min-height: 52px; padding: 8px 10px 8px 12px;
+  background: var(--surface); border: 1px solid var(--line-strong); border-left: 4px solid var(--leaf); border-radius: var(--r-control);
+  font: inherit; color: var(--ink); text-align: left;
+}
+.type-chip > .ico { color: var(--leaf-dark); }
+.type-chip > span { display: flex; flex-direction: column; line-height: 1.25; }
+.type-chip b { font-family: var(--display); font-weight: 600; font-size: 1.05rem; }
+.type-chip small { color: var(--ink-3); font-size: .78rem; }
+.type-x {
+  width: 30px; height: 30px; margin-left: 4px; border-radius: 50%; border: 0; cursor: pointer;
+  display: grid; place-items: center; background: transparent; color: var(--ink-3);
+}
+.type-x .ico { width: 16px; height: 16px; }
+.type-x:hover { background: var(--red-tint); color: var(--red); }
+.type-add { cursor: pointer; border-style: dashed; border-left: 1px dashed var(--line-strong); background: transparent; color: var(--leaf-dark); padding-right: 16px; }
+.type-add:hover { background: var(--leaf-tint); border-color: var(--leaf); }
+.field .hint .link { font-size: .82rem; }
+
 /* ----------------------------- language ---------------------------- */
 /* Sinhala sits beside the English as a quieter second voice: same line in
    buttons and headings, its own line under menu items and column heads. */
