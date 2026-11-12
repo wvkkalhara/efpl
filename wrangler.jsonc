@@ -1,0 +1,10 @@
+// Cloudflare Workers config — a static-assets-only Worker (no server code).
+// Only the files not listed in .assetsignore are uploaded and served.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "efpl",
+  "compatibility_date": "2026-11-01",
+  "assets": {
+    "directory": "."
+  }
+}

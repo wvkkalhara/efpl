@@ -1,0 +1,42 @@
+# Files Cloudflare must NOT upload as part of the website.
+# The site itself is only: index.html, css/, js/, assets/, sw.js,
+# manifest.webmanifest, _headers and _redirects.
+
+# installed during the Cloudflare build (one file alone is 152 MB)
+node_modules
+**/node_modules
+.wrangler
+
+# version control and editor/tool settings
+.git
+**/.git
+.github
+.gitignore
+.editorconfig
+.nvmrc
+.firebaserc
+.assetsignore
+**/.DS_Store
+
+# build output, tooling, tests, docs and config
+dist
+tests
+docs
+build.js
+server.js
+package.json
+package-lock.json
+bun.lock
+bun.lockb
+wrangler.jsonc
+wrangler.json
+wrangler.toml
+firebase.json
+firebase.rules.json
+
+# project text files
+README.md
+CHANGELOG.md
+CONTRIBUTING.md
+SECURITY.md
+LICENSE

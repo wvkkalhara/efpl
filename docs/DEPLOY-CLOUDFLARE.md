@@ -1,6 +1,6 @@
-# Deploying to Cloudflare Pages
+# Deploying to Cloudflare (Workers & Pages)
 
-The app is a static site: no build step, no server code. Cloudflare Pages
+The app is a static site: no build step, no server code. Cloudflare
 serves the repository as it is.
 
 ## 1. Put the folder on GitHub
@@ -8,30 +8,40 @@ serves the repository as it is.
 Upload the whole project folder to a new GitHub repository (private is
 recommended). Do **not** upload a `node_modules` folder if one exists.
 
-## 2. Connect it to Cloudflare Pages
+## 2. Connect it to Cloudflare
 
-Cloudflare dashboard → **Workers & Pages** → **Create** → **Pages** →
-**Connect to Git** → choose the repository, then use these build settings:
+Cloudflare dashboard → **Workers & Pages** → **Create** → **Import a repository**
+→ choose the repository. The repository already contains everything Cloudflare
+needs, so the defaults work:
 
-| Setting                 | Value                                  |
-| ----------------------- | -------------------------------------- |
-| Framework preset        | None                                   |
-| Build command           | *(leave empty)*                        |
-| Build output directory  | `/` *(the repository root)*            |
-| Root directory          | *(leave empty)*                        |
+| Setting          | Value                                       |
+| ---------------- | ------------------------------------------- |
+| Build command    | *(leave empty — `npm run build` also works)* |
+| Deploy command   | `npx wrangler deploy`                       |
+| Root directory   | *(leave empty)*                             |
 
-Deploy. Every later push to the main branch redeploys automatically.
+Every later push to the main branch redeploys automatically.
 
-`_headers` adds the security headers (Content-Security-Policy and friends) and
-`_redirects` keeps `docs/`, `tests/`, the tooling and the config files off the
-public site. Cloudflare reads both files and never serves them.
+What the repository files do:
+
+* `wrangler.jsonc` — tells Cloudflare this is a static site (a Worker with
+  static assets, no server code).
+* `.assetsignore` — the list of files **not** to publish. Cloudflare installs
+  the test tool into `node_modules` during the build (one file there is 152 MB,
+  far over the 25 MB limit), so without this list the deploy fails with
+  "Asset too large". Only the 18 app files are published: `index.html`,
+  `css/`, `js/`, `assets/`, `sw.js`, `manifest.webmanifest`.
+* `_headers` — security headers (Content-Security-Policy and friends).
+* `_redirects` — sends requests for docs/tooling paths back to the app.
+
+Cloudflare reads `_headers`, `_redirects` and `.assetsignore`; it never serves them.
 
 ## 3. Allow the new web address in Firebase (required for Google sign-in)
 
 Firebase console → project **efpl-2feb8** → **Authentication** → **Settings** →
 **Authorized domains** → **Add domain**:
 
-* `<your-project>.pages.dev`
+* `efpl.<your-account>.workers.dev` (the address Cloudflare shows after the first deploy)
 * your custom domain too, if you add one in Cloudflare
 
 Without this, "Continue with Google" fails with an "unauthorized domain" message.

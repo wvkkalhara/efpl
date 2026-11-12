@@ -58,7 +58,7 @@ function headers(ext) {
 // Only real app files are served: never dotfiles (.git, .env), and never
 // the project's own tooling, docs or tests.
 const BLOCKED = new Set(['server.js', 'build.js', 'package.json', 'package-lock.json', 'firebase.json',
-  'firebase.rules.json', 'node_modules', 'tests', 'docs', '_headers', '_redirects']);
+  'firebase.rules.json', 'node_modules', 'tests', 'docs', '_headers', '_redirects', 'wrangler.jsonc', 'dist']);
 
 function deny(res, code, text) {
   res.writeHead(code, headers('.txt'));

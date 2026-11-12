@@ -18,7 +18,9 @@
       "LICENSE",
       "firebase.rules.json",
       "_headers",
-      "_redirects"
+      "_redirects",
+      "wrangler.jsonc",
+      "node_modules/**"
     ],
     "headers": [
       {
