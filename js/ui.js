@@ -93,6 +93,8 @@
   }
   /** Run fn once any history pops started by closing dialogs have landed. */
   function whenSettled(fn) { if (pendingPops) afterPop.push(fn); else fn(); }
+  /** True while a dialog's history entry is still being popped (used by the tests). */
+  function isSettling() { return pendingPops > 0; }
   /** Close every open dialog (used when the page changes). */
   function closeAllLayers() { layers.slice().reverse().forEach((l) => l.close(true)); }
 
@@ -336,7 +338,7 @@
   }
 
   window.UI = {
-    esc, attr, $, $$, icon, whenSettled, closeAllLayers, pushLayer, dropLayer, toast, modal, confirm, badge, statusTone, stat, table, empty,
+    esc, attr, $, $$, icon, whenSettled, isSettling, closeAllLayers, pushLayer, dropLayer, toast, modal, confirm, badge, statusTone, stat, table, empty,
     field, input, select, textarea, money, kg, dt, dOnly, formData, showErrors,
     download, toCSV, print, debounce,
   };

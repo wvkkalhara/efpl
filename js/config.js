@@ -8,7 +8,7 @@
    ===================================================================== */
 window.EFPL_CONFIG = {
   appName: 'EnerFab Biomass Storage',
-  version: '1.4.4',
+  version: '1.5.1',
   build: '2026.11',
 
   /* ---- Firebase project (efpl-2feb8) ---- */
@@ -55,7 +55,7 @@ window.EFPL_CONFIG = {
     reducedUnitPrice: 270,    // Rs / bag when the fill check fails (req 3)
     fillThresholdPct: 90,     // average fill % that keeps full price
     sampleSizePct: 5,         // % of bags pulled for the fill check
-    minSampleSize: 3,
+    minSampleSize: 1,         // no extra minimum: the sample is the full 5 % and every bag in it is measured
     // Moisture from bag weight: moisture % = (40 / 18) x kg - 20,
     // i.e. the line through 18 kg = 20 % and 36 kg = 60 %.        (req 5, 6)
     moistureCalKg1: 18, moistureCalPct1: 20,
@@ -66,7 +66,16 @@ window.EFPL_CONFIG = {
     deductWetPct: 10,         // % proposed for a wet load
     bagSerialPrefix: 'EFPL-BG',
     maxBagsPerDelivery: 2000,
-    bayCount: 6,
+    // Bays: created the first time the yard is opened; each one can be
+    // renamed, resized or added to later.
+    bayCount: 30,
+    bayCapacityBags: 200,
+    // Drying in the bay: a bag loses about 0.6 kg a day (50 kg becomes
+    // about 30 kg in a month) until it is as dry as it gets.
+    dryingKgPerDay: 0.6,
+    driestBagKg: 18,          // bags stop losing weight here (18 kg = 20 % moisture)
+    moistureReadyPct: 25,     // a bay at or below this is flagged "dry: use first"
+    defaultDeductionReason: 'Bags are not filled fully',
   },
 
   biomassTypes: [

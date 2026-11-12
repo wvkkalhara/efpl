@@ -994,6 +994,83 @@ html[data-lang="mix"] .lang-opt[data-lang="mix"] { background: var(--surface); c
 }
 .noscript { padding: 40px; text-align: center; font-family: var(--font); }
 
+/* ------------------------- supplier search ------------------------- */
+.supplier-pick { display: flex; gap: 10px; margin-bottom: 14px; }
+.supplier-pick .nm-input { flex: 1 1 auto; }
+.fill-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }
+.fill-progress { margin-left: auto; font-weight: 600; font-size: .86rem; }
+.bank-box td:first-child { color: var(--ink-3); width: 42%; }
+.bank-box td { padding: 5px 8px; }
+
+/* -------------------------- choosing bays -------------------------- */
+.alloc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 8px; max-height: 300px; overflow-y: auto; padding: 2px; }
+.alloc-cell { display: flex; flex-direction: column; gap: 3px; padding: 8px; border: 1px solid var(--line); border-radius: var(--r-control); background: var(--surface-2); }
+.alloc-cell.on { border-color: var(--leaf); background: var(--leaf-tint); }
+.alloc-cell.over { border-color: var(--amber); background: var(--amber-tint); }
+.alloc-code { font-family: var(--display); font-weight: 600; }
+.alloc-cell .nm-input { min-height: 36px; padding: 4px 8px; text-align: center; }
+.alloc-room { font-size: .72rem; color: var(--ink-3); line-height: 1.2; }
+.alloc-total { margin: 10px 0 0; }
+.alloc-total b { font-family: var(--display); font-size: 1.15rem; }
+
+/* ------------------------------ bay tiles --------------------------
+   One tile per bay. The left edge and the moisture figure carry the
+   state, and every tile also says it in words (never colour alone).
+   A dry bay is the one to act on, so it is the loud one. */
+.bay-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 10px; }
+.bay-tile {
+  display: flex; flex-direction: column; gap: 6px; text-align: left; cursor: pointer; font: inherit; color: var(--ink);
+  padding: 12px 12px 10px; border-radius: var(--r-card); background: var(--surface);
+  border: 1px solid var(--line); border-left: 5px solid var(--leaf);
+  transition: transform 120ms var(--ease-out), border-color 140ms ease;
+}
+.bay-tile:active { transform: scale(.98); }
+.bt-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.bt-head b { font-family: var(--display); font-weight: 600; font-size: 1.15rem; }
+.bt-moist { font-family: var(--display); font-weight: 600; font-size: 1.15rem; font-variant-numeric: tabular-nums; }
+.bt-count { font-size: .82rem; color: var(--ink-2); }
+.bt-state { font-size: .78rem; color: var(--ink-3); }
+.bay-tile.is-empty { border-left-color: var(--line-strong); background: var(--surface-2); color: var(--ink-3); }
+.bay-tile.is-empty .meter span { background: none; }
+.bay-tile.is-damp { border-left-color: #d99a1c; }
+.bay-tile.is-damp .bt-moist { color: var(--amber); }
+.bay-tile.is-wet { border-left-color: #2b6f93; }
+.bay-tile.is-wet .bt-moist { color: var(--blue); }
+.bay-tile.is-dry { border-color: var(--red); border-left-color: var(--red); background: var(--red-tint); }
+.bay-tile.is-dry .bt-moist, .bay-tile.is-dry .bt-state { color: var(--red); font-weight: 600; }
+.bay-tile.is-dry .meter span { background: repeating-linear-gradient(90deg, var(--red) 0 6px, transparent 6px 8px); }
+.bay-tile.is-over .bt-count { color: var(--amber); font-weight: 600; }
+.bay-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin-bottom: 12px; max-width: none; }
+.bay-legend .key { width: 12px; height: 12px; border-radius: 3px; display: inline-block; margin-left: 10px; }
+.bay-legend .key:first-child { margin-left: 0; }
+.key-dry { background: var(--red); } .key-damp { background: #d99a1c; } .key-wet { background: #2b6f93; } .key-empty { background: var(--line-strong); }
+button.bay-mini { font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.bay-mini.is-dry { border-color: var(--red); background: var(--red-tint); }
+.pill-dry { background: var(--red-tint); color: var(--red); }
+.bay-now { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 14px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--r-control); background: var(--surface-2); }
+.bay-now.is-dry { border-color: var(--red); background: var(--red-tint); }
+.bay-now > div { display: flex; flex-direction: column; gap: 1px; }
+.bay-now b { font-family: var(--display); font-size: 1.5rem; font-weight: 600; line-height: 1.15; }
+.bay-weigh { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
+.bay-weigh .field { margin-bottom: 0; flex: 0 1 240px; }
+@media (hover: hover) and (pointer: fine) { .bay-tile:hover { border-color: var(--ink-3); } .bay-tile.is-dry:hover { border-color: var(--red); } }
+@media (max-width: 760px) { .bay-tiles { grid-template-columns: 1fr 1fr; } .supplier-pick { flex-direction: column; } .alloc-grid { grid-template-columns: repeat(3, 1fr); } }
+
+/* -------------------------- print additions ------------------------ */
+@media print {
+  #print-root .print-head { align-items: center; gap: 5mm; }
+  #print-root .print-logo { width: 16mm; height: 16mm; object-fit: contain; flex: 0 0 16mm; }
+  #print-root .print-title { flex: 1 1 auto; }
+  #print-root .sticker .co { display: flex; align-items: center; gap: 1.5mm; }
+  #print-root .sticker-logo { width: 5mm; height: 5mm; object-fit: contain; }
+  #print-root .blank { display: inline-block; min-width: 45mm; border-bottom: 1px solid #555; height: 5mm; }
+  #print-root .fill-sheet { display: grid; grid-template-columns: repeat(5, 1fr); gap: 3mm; margin-top: 3mm; }
+  #print-root .fill-box { border: 1.2px solid #111; border-radius: 2mm; height: 19mm; padding: 1.5mm 2mm; position: relative; break-inside: avoid; }
+  #print-root .fill-box span { font-size: 8pt; color: #333; }
+  #print-root .fill-box i { position: absolute; right: 2mm; bottom: 1.5mm; font-style: normal; font-size: 11pt; color: #555; }
+  #print-root .bank-box td { border: 0; padding: .5mm 2mm .5mm 0; }
+}
+
 /* ---------------------------- scrollbars --------------------------- */
 :root { --sb-thumb: rgba(19, 32, 22, .2); --sb-thumb-hover: rgba(19, 32, 22, .38); }
 @supports not selector(::-webkit-scrollbar) {

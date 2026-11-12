@@ -32,7 +32,7 @@
     { group: 'Money', items: [
       { id: 'payments', label: 'Payments', short: 'Payments', icon: 'wallet', see: ['payment.split', 'payment.approve', 'payment.release', 'payment.pay', 'audit.read'] },
       { id: 'suppliers', label: 'Suppliers', short: 'Suppliers', icon: 'truck', see: ['supplier.write', 'payment.release', 'audit.read'] },
-      { id: 'farmers', label: 'Farmers', short: 'Farmers', icon: 'leaf', see: ['farmer.write', 'payment.release', 'audit.read'] },
+
     ] },
     { group: 'Insight', items: [
       { id: 'reports', label: 'Reports', short: 'Reports', icon: 'chart', see: ['report.read', 'audit.read'] },
@@ -281,7 +281,6 @@
                 </button>
                 <div class="dropdown" id="user-dropdown" role="menu" hidden>
                   <div class="dropdown-head">${esc(user.email)}</div>
-                  ${window.I18n ? window.I18n.switchHtml() : ''}
                   <button data-menu="account">${ico('key')} My account and password</button>
                   ${this.canSee('admin') ? `<button data-menu="settings">${ico('settings')} Administration</button>` : ''}
                   <button data-menu="backup">${ico('download')} Backup data</button>
@@ -344,6 +343,7 @@
         return;
       }
       view.innerHTML = '';
+      if (this.ensureBays) this.ensureBays();   // a yard with no bays gets its starting 30
       this._live = null;                  // a screen that wants live refreshes sets this in render()
       this._navSig = this.visibleScreens().join();
       view.classList.remove('view-enter');
@@ -388,7 +388,7 @@
             <div class="brand-text"><strong>EnerFab</strong><span>Green Engineering</span></div>
           </div>
           <div>
-            <h1>Every bag, from the farmer to the gasifier.</h1>
+            <h1>Every bag, from the supplier to the gasifier.</h1>
             <p>Weigh the truck, check the fill, store by bay, feed the gasifier and pay the supplier. One bag serial ties it all together.</p>
           </div>
           <ul class="auth-facts">
@@ -433,7 +433,6 @@
             </div>` : ''}
           </form>
         </div>
-        ${window.I18n ? window.I18n.switchHtml() : ''}
         <p class="auth-foot">EnerFab (Pvt) Ltd, No. 115/3 Rampart Road, Sri Jayawardanapura Kotte</p>
         </div>
       </div>`;
@@ -668,7 +667,7 @@
     },
 
     /**
-     * "My account": who is signed in, the language, and the password.
+     * "My account": who is signed in, and the password.
      * Anyone can open it, whatever their role. A person who joined with
      * Google can create a password here; anyone can change theirs.
      */
@@ -684,8 +683,6 @@
             <span class="avatar lg">${esc((user.name || user.email).slice(0, 1).toUpperCase())}</span>
             <div><strong>${esc(user.name || user.email)}</strong><small>${esc(D.ROLE_LABEL[Auth.role()] || Auth.role())} · ${esc(user.email)}</small></div>
           </div>
-          <h4>Language</h4>
-          ${window.I18n ? window.I18n.switchHtml() : ''}
           <h4>${has ? 'Change your password' : 'Create a password'}</h4>
           ${demo ? '<p class="muted">Passwords cannot be set in the demo.</p>' : `
             <p class="muted small">${has

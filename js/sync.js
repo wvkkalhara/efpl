@@ -104,6 +104,7 @@
     }, r);
     if (!Array.isArray(next.biomassTypes) || !next.biomassTypes.length) next.biomassTypes = local.biomassTypes;
     Store.data.settings = next;
+    Store.migrateSettings();             // settings saved by an older version get the same corrections
     Store.clearDirty('settings', 'singleton');
     return 1;
   }
@@ -154,6 +155,7 @@
       let mine = users.find((u) => u.uid === uid) || users.find((u) => (u.email || '').toLowerCase() === email);
 
       if (!mine) {
+        if (p.removed === true) continue;                       // removed before this device ever saw them
         users.push({
           id: `usr_${uid}`, uid, email, name: typeof p.name === 'string' && p.name ? p.name : email.split('@')[0],
           role: cloudRole, active: cloudActive,
@@ -182,6 +184,7 @@
       if (mine.role !== cloudRole && mine.role !== 'super_admin') patch.role = cloudRole;
       if ((mine.active !== false) !== cloudActive) patch.active = cloudActive;
       if (typeof p.name === 'string' && p.name && p.name !== mine.name) patch.name = p.name;
+      if ((mine.deleted === true) !== (p.removed === true)) patch.deleted = p.removed === true;
       if (Object.keys(patch).length) {
         Object.assign(mine, patch, { updatedAt: p.updatedAt || mine.updatedAt });
         if (patch.role && patch.role !== 'pending') mine.pendingSince = null;
@@ -276,6 +279,7 @@
     // The rules only accept a real role. A person waiting for approval has
     // none, and the owner is recognised by the verified email, not by a role.
     if (window.Domain.ASSIGNABLE_ROLES.includes(rec.role)) profile.role = rec.role;
+    profile.removed = rec.deleted === true;      // taken off the staff list by an administrator
     return profile;
   }
 

@@ -1,6 +1,6 @@
 # Biomass Storage Software — Requirements Review & Commentary
 
-**Prepared for:** EnerFab (Pvt) Ltd — Biomass Storage, Nawagaththegama
+**Prepared for:** EnerFab (Pvt) Ltd — Biomass Storage, Balangoda
 **For:** Mr. Kaniska (development) · Biomass Supervisor · Management
 **Version:** 1.0 · 9 November 2026
 **Source documents:** *Biomass Storage software Requirements (1).txt* (15 points) and the WhatsApp thread on bag numbering

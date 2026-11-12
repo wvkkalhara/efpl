@@ -3,6 +3,65 @@
 All notable changes to the EnerFab Biomass Storage system.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.5.1] — 2026-11-13
+
+From the owner's WhatsApp list of 12 November.
+
+### Added
+
+* **Bays: 30 bays of 200 bags** are created the first time the yard opens.
+  Every bay can be renamed, resized or removed (when empty), and more added.
+* **Tap a bay** to see everything about it now: bags in it, today's moisture,
+  today's bag weight, the oldest load, and each load with its arrival and
+  today's weight. A bag can be weighed from the bay to replace the estimate.
+* **Bay history** (button in the bay): every load in and every issue out,
+  with bag weight and **moisture** each time, totals in and out, printable.
+* **Drying**: a bag is taken to lose 0.6 kg a day in the bay (50 kg becomes
+  about 30 kg in a month), down to 18 kg. Editable in Business settings.
+* **Dry bays are shown red** ("Dry, use first", at or below 25 % moisture),
+  with a filter and a count on the Bays screen.
+* **Printable blank fill-check sheet** on Receive biomass step 3: one box per
+  sample bag, to fill in by hand at the drum and type in afterwards. After the
+  fill check the supervisor goes straight on to choosing the bays.
+* **Invoice** for every accepted load, with the supplier's bank details.
+* **Supplier search** and **New supplier** on Receive biomass, and a search
+  bar on the Suppliers screen (name, code, phone, village, account).
+* **Remove a user** from Administration → Users & roles. They are signed out
+  everywhere; their records stay; the same email can be added again later.
+
+### Changed
+
+* **Bank details** are shown when a load is accepted into the bays, and are
+  printed on the receipt, invoice, payment slip and supplier statement.
+* **The logo is on every print** (receipts, invoices, labels, slips,
+  statements, fill sheets, bay history, reports).
+* **The fill check must have the whole 5 % sample**, rounded up, with no
+  minimum of 3 bags, both on paper and in the system.
+* **Default deduction reason** is "Bags are not filled fully". When the load
+  reads damp or wet, the moisture wording is offered under the box instead.
+* The site is **Balangoda** everywhere; older saved settings are moved over.
+
+### Removed
+
+* The **Farmers** screen and the farmer declaration step before payment.
+* The Sinhala + English (two-language) text.
+
+### Fixed
+
+* The single-file build (`npm run build`) left the service-worker start-up in
+  place when the files had Windows line endings, so the bundle asked for a
+  `sw.js` that is not there. The build now removes it either way, and stops
+  with an error if it ever fails to.
+
+### Tests
+
+* The smoke test follows the changes above (no farmers, full 5 % sample,
+  default reason, suggested bay split) and has 14 new checks for the owner's
+  list: 30 × 200 bays, resizing, drying, red dry bays, bay details and
+  history, the blank fill sheet, the logo on every print, bank details,
+  supplier search, removing a user, no Farmers screen, no Sinhala text.
+  144 checks pass.
+
 ## [1.4.4] — 2026-11-12
 
 ### Added

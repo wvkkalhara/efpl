@@ -30,7 +30,7 @@
 --red       #c00000   destructive only     (5.4:1)
 ```
 
-Business context that shaped the build: EnerFab has run biomass gasifiers since 2005, a 40 000-plant fuelwood plantation at Nawagaththegama, and a collection network of roughly 2 000 suppliers / 3 000 farmers. The species in the app (Gliricidia, Ipil Ipil, cinnamon waste, timber off-cuts, coconut shell) are the ones named on their own site — not invented placeholders.
+Business context that shaped the build: EnerFab has run biomass gasifiers since 2005, a 40 000-plant fuelwood plantation at Balangoda, and a collection network of roughly 2 000 suppliers / 3 000 farmers. The species in the app (Gliricidia, Ipil Ipil, cinnamon waste, timber off-cuts, coconut shell) are the ones named on their own site — not invented placeholders.
 
 ---
 

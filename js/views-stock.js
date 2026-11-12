@@ -40,7 +40,7 @@
 
         <div class="toolbar">
           <div class="toolbar-left">
-            <input class="nm-input search" id="bag-search" placeholder="Search a serial or farmer…" />
+            <input class="nm-input search" id="bag-search" placeholder="Search a serial or supplier…" />
             ${UI.select('bagStatus', [
               { value: '', label: 'All statuses' },
               ...Object.keys(D.BAG_STATUS).map((k) => ({ value: k, label: D.BAG_STATUS_LABEL[k] })),
@@ -63,7 +63,7 @@
         if (query) {
           const q = query.toLowerCase();
           list = list.filter((b) => String(b.serial).toLowerCase().includes(q)
-            || (b.farmerId && ((Store.byId('farmers', b.farmerId) || {}).name || '').toLowerCase().includes(q))
+
             || (b.supplierId && supplierName(b.supplierId).toLowerCase().includes(q)));
         }
         const shown = list.slice(0, 200);
@@ -75,7 +75,7 @@
             { label: 'Serial', render: (r) => `<b class="mono">${esc(r.serial)}</b>` },
             { label: 'Status', render: (r) => badge(D.BAG_STATUS_LABEL[r.status] || r.status, UI.statusTone(r.status)) },
             { label: 'Supplier', render: (r) => esc(r.supplierId ? supplierName(r.supplierId) : '—') },
-            { label: 'Farmer', render: (r) => esc(r.farmerId ? ((Store.byId('farmers', r.farmerId) || {}).name || '—') : '—') },
+
             { label: 'Bay', render: (r) => esc(r.bayCode || '—') },
             { label: 'Updated', render: (r) => `<span class="muted small">${esc(dOnly(r.updatedAt))}</span>` },
             { label: '', cls: 'actions', render: (r) => `<button class="nm-btn tiny" data-trace="${esc(r.serial)}">Trace</button>` },
@@ -154,7 +154,7 @@
     UI.modal({
       title: 'Issue numbered bags to a supplier',
       size: 'md',
-      body: `<p class="muted">A bag round is the same numbered bags travelling out and coming back filled. The supplier writes his number and the farmer's registration number on the tag before delivering.</p>
+      body: `<p class="muted">A bag round is the same numbered bags travelling out and coming back filled. The supplier writes his supplier number on the tag before delivering.</p>
         ${UI.field('Supplier', UI.select('supplierId', VH.supplierOptions(), { required: true, placeholder: 'Select supplier…' }))}
         <div class="grid-2">
           ${UI.field('Round number', UI.input('roundNo', { type: 'number', min: 1, value: lastRound + 1 }))}
@@ -167,7 +167,7 @@
         ]))}
         <div class="nm-card pad-sm tip">
           <b>Why a serial only?</b>
-          <p class="small muted">As agreed on site: a bag carries one serial number and nothing else. Farmer and supplier numbers are written in the blank box on the sticker at delivery, so a bag can move between farmers in the second round without a reprint.</p>
+          <p class="small muted">As agreed on site: a bag carries one serial number and nothing else. The supplier number is written in the blank box on the sticker, so the same bag can go to a different supplier in the next round without a reprint.</p>
         </div>`,
       footer: '<button class="nm-btn" data-close>Cancel</button><button class="nm-btn primary" data-act="issue">Issue bags</button>',
       onMount(el, close) {
@@ -207,115 +207,271 @@
     const issue = Store.byId('bagIssues', issueId);
     if (!issue) return;
     const sup = Store.byId('suppliers', issue.supplierId) || {};
-    const farmers = Store.where('farmers', (f) => f.supplierId === issue.supplierId);
+
     const list = issue.serials;
     const html = `${VH.printHeader('Bag allocation slip', `Round ${issue.roundNo} · ${sup.code} ${sup.name} · ${dt(issue.issuedAt)}`)}
-      <p class="meta">${list.length} numbered bags issued. Every bag carries the serial below. Please write the <b>farmer registration number</b> and your <b>supplier number</b> in the box on the bag tag before delivering.</p>
-      <table><thead><tr><th>#</th><th>Serial</th><th>Farmer reg. no (write on tag)</th><th>#</th><th>Serial</th><th>Farmer reg. no</th></tr></thead>
+      <p class="meta">${list.length} numbered bags issued. Every bag carries the serial below. Please write your <b>supplier number</b> in the box on the bag tag before delivering.</p>
+      <table><thead><tr><th>#</th><th>Serial</th><th>Returned (tick)</th><th>#</th><th>Serial</th><th>Returned (tick)</th></tr></thead>
         <tbody>${Array.from({ length: Math.ceil(Math.min(list.length, 240) / 2) }, (_, i) => `
           <tr><td>${i + 1}</td><td class="mono">${esc(list[i])}</td><td></td>
               <td>${i + 1 + Math.ceil(Math.min(list.length, 240) / 2)}</td>
               <td class="mono">${esc(list[i + Math.ceil(Math.min(list.length, 240) / 2)] || '')}</td><td></td></tr>`).join('')}
         </tbody></table>
-      <h2>Farmer reference (${farmers.length})</h2>
-      <p class="meta">${farmers.map((f) => `${esc(f.code)} · ${esc(f.farmerNo || '')} · ${esc(f.name)}`).join(' &nbsp;|&nbsp; ')}</p>
+
       <div class="sign">Supplier acknowledgement</div>`;
     UI.print(html, `Allocation slip round ${issue.roundNo}`);
     VH.audit('bag.issue.print', 'bagIssue', issue.id, `Allocation slip for round ${issue.roundNo} printed`);
   };
 
-  /* ================================ BAYS ============================= */
+  /* ================================ BAYS =============================
+     The yard starts with 30 bays of 200 bags. Nothing about a bay is
+     fixed: it can be renamed, resized, added or removed, and filling one
+     past its size is allowed (it just shows as over size).
+
+     A tile shows what is in the bay NOW, including how dry it is today.
+     Tapping it opens the full picture; "History" from there shows every
+     load that went in and every issue that came out, with the moisture
+     each time.
+     ==================================================================== */
+  const BAY_SEED_STAMP = '2026-01-01T00:00:00.000Z';   // older than any real edit, so a real edit always wins a sync
+
+  /** Create the starting bays once, on a yard that has none. */
+  App.ensureBays = function () {
+    if (Store.space !== 'live' || !Auth.current() || Auth.isPending()) return 0;
+    if (Store.all('bays').length) return 0;
+    if (!Auth.can('bay.allocate') && !Auth.can('delivery.accept')) return 0;
+    const s = Store.settings();
+    const n = Math.max(1, Math.min(200, Number(s.bayCount) || 30));
+    const cap = Number(s.bayCapacityBags) || 200;
+    // Fixed ids: if two devices both start an empty yard, they create the
+    // same 30 bays, not 60.
+    const recs = [];
+    for (let i = 1; i <= n; i++) {
+      recs.push({ id: `bay_${String(i).padStart(3, '0')}`, code: `BAY-${i}`, name: `Bay ${i}`, capacityBags: cap, createdAt: BAY_SEED_STAMP, updatedAt: BAY_SEED_STAMP });
+    }
+    Store.bulkAdd('bays', recs, 'bays-setup');
+    return n;
+  };
+
+  const bayOrder = (a, b) => (D.parseSerialNumber(a.code) || 0) - (D.parseSerialNumber(b.code) || 0) || String(a.code).localeCompare(String(b.code));
+  let bayFilter = 'ALL';
+
   App.register('bays', {
     title: 'Bays & stock',
     render(view) {
+      App.ensureBays();
       const s = Store.settings();
-      const bays = Store.where('bays', (b) => !b.deleted);
-      const stock = bays.map((b) => {
-        const bags = Store.where('bags', (x) => x.bayId === b.id && x.status === 'STORED');
-        return { bay: b, bags };
-      });
+      const all = Store.where('bays', (b) => !b.deleted).slice().sort(bayOrder).map((b) => VH.bayNow(b));
+      const withStock = all.filter((x) => x.count > 0);
+      const dry = all.filter((x) => x.ready);
+      const empty = all.filter((x) => x.count === 0);
+      const totalBags = all.reduce((a, x) => a + x.count, 0);
+      const totalCap = all.reduce((a, x) => a + x.capacity, 0);
+      const FILTERS = [['ALL', `All (${all.length})`], ['STOCK', `With stock (${withStock.length})`], ['DRY', `Dry, use first (${dry.length})`], ['EMPTY', `Empty (${empty.length})`]];
+      if (!FILTERS.some((f) => f[0] === bayFilter)) bayFilter = 'ALL';
 
       view.innerHTML = `
+        <section class="stats stats-4">
+          ${UI.stat('Bags in the yard', totalBags.toLocaleString(), `of ${totalCap.toLocaleString()} bag spaces`)}
+          ${UI.stat('Bays in use', `${withStock.length}`, `${empty.length} empty`)}
+          ${UI.stat('Dry, use first', `${dry.length}`, `at or below ${D.moistureReadyPct(s)}% moisture`, dry.length ? 'danger' : null)}
+          ${UI.stat('Drying rate', `${s.dryingKgPerDay ?? 0.6} kg`, 'per bag, per day in the bay')}
+        </section>
         <div class="toolbar">
-          <p class="muted">Stock is counted from the bag serials in each bay, so it updates every time a bag moves.</p>
+          <div class="seg" id="bay-filters">
+            ${FILTERS.map(([v, l]) => `<button class="seg-btn ${v === bayFilter ? 'active' : ''}" data-bfilter="${v}">${esc(l)}</button>`).join('')}
+          </div>
           <div class="toolbar-right">${Auth.can('bay.allocate') ? '<button class="nm-btn" id="add-bay"><i class="i i-plus"></i>Add bay</button>' : ''}</div>
         </div>
-        <div class="bay-grid">
-          ${stock.map(({ bay, bags }) => {
-            const pctFull = Math.min(100, Math.round((bags.length / (bay.capacityBags || 1)) * 100));
-            const byType = {};
-            for (const bag of bags) {
-              const d = Store.byId('deliveries', bag.deliveryId);
-              const t = d ? d.biomassType : 'UNKNOWN';
-              byType[t] = (byType[t] || 0) + 1;
-            }
-            const oldest = bags.slice().sort((a, b) => Date.parse(a.deliveredAt || 0) - Date.parse(b.deliveredAt || 0))[0];
-            const avgKg = bayAvgKg(bags);
-            return `<div class="nm-card pad bay-card">
-              <div class="bay-head"><div><h3>${esc(bay.code)}</h3><span class="muted small">${esc(bay.name || '')}</span></div>
-                ${badge(`${bags.length.toLocaleString()} bags`, bags.length ? 'ok' : 'muted')}</div>
-              <div class="meter big"><span style="width:${pctFull}%"></span></div>
-              <p class="muted small">${pctFull}% of ${(bay.capacityBags || 0).toLocaleString()} bag capacity${oldest && oldest.deliveredAt ? `, oldest from ${dOnly(oldest.deliveredAt)}` : ''}</p>
-              ${avgKg ? `<p class="small">${VH.moistureBadge(D.moistureFromWeight(avgKg, s))} <span class="muted">at ${avgKg} kg per bag on arrival</span></p>` : ''}
-              <div class="chips">${Object.entries(byType).map(([t, n]) => `<span class="chip">${esc(VH.typeLabel(t))} · ${n}</span>`).join('') || '<span class="muted small">Empty</span>'}</div>
-              <div class="bay-actions">
-                ${Auth.can('usage.request') ? `<button class="nm-btn tiny" data-issue="${bay.id}" ${bags.length ? '' : 'disabled'}><i class="i i-flame"></i>Request issue</button>` : ''}
-                <button class="nm-btn tiny" data-view="${bay.id}">View bags</button>
-              </div>
-            </div>`;
-          }).join('')}
-        </div>`;
+        <p class="muted small bay-legend"><span class="key key-dry"></span>Dry, use first <span class="key key-damp"></span>Still damp <span class="key key-wet"></span>Wet <span class="key key-empty"></span>Empty. Moisture is today's estimate: a bag loses about ${s.dryingKgPerDay ?? 0.6} kg a day in the bay. Tap a bay for the details.</p>
+        <div class="bay-tiles" id="bay-tiles"></div>`;
 
-      UI.$$('[data-issue]', view).forEach((b) => b.addEventListener('click', () => App.requestUsage(b.dataset.issue)));
-      UI.$$('[data-view]', view).forEach((b) => b.addEventListener('click', () => {
-        const bay = Store.byId('bays', b.dataset.view);
-        const bags = Store.where('bags', (x) => x.bayId === bay.id && x.status === 'STORED').slice(0, 100);
-        UI.modal({
-          title: `${bay.code} — ${bags.length} bags shown`,
-          size: 'md',
-          body: UI.table({
-            rows: bags, rowKey: (r) => r.serial,
-            columns: [
-              { label: 'Serial', render: (r) => `<span class="mono">${esc(r.serial)}</span>` },
-              { label: 'Supplier', render: (r) => esc(supplierName(r.supplierId)) },
-              { label: 'Farmer', render: (r) => esc((Store.byId('farmers', r.farmerId) || {}).name || '—') },
-              { label: 'Received', render: (r) => `<span class="muted small">${esc(dOnly(r.deliveredAt))}</span>` },
-            ],
-          }),
-        });
+      const draw = () => {
+        const list = bayFilter === 'STOCK' ? withStock : bayFilter === 'DRY' ? dry : bayFilter === 'EMPTY' ? empty : all;
+        view.querySelector('#bay-tiles').innerHTML = list.map((x) => {
+          const cls = x.count === 0 ? 'is-empty' : x.ready ? 'is-dry' : x.band === 'HIGH' ? 'is-wet' : x.band === 'WARN' ? 'is-damp' : 'is-ok';
+          const state = x.count === 0 ? 'Empty' : x.ready ? 'Dry, use first' : x.moisture === null ? 'No weight on record' : D.MOISTURE_LABEL[x.band];
+          return `<button class="bay-tile ${cls} ${x.over ? 'is-over' : ''}" data-bay-open="${x.bay.id}" aria-label="${esc(x.bay.code)}: ${x.count} bags, ${esc(state)}">
+            <span class="bt-head"><b>${esc(x.bay.code)}</b><span class="bt-moist">${x.moisture === null ? '' : `${x.moisture}%`}</span></span>
+            <span class="meter"><span style="width:${Math.min(100, x.pctFull)}%"></span></span>
+            <span class="bt-count">${x.count.toLocaleString()} / ${x.capacity.toLocaleString()} bags${x.over ? ', over size' : ''}</span>
+            <span class="bt-state">${esc(state)}${x.count && x.oldestDays !== null ? `, ${x.oldestDays} day${x.oldestDays === 1 ? '' : 's'} in` : ''}</span>
+          </button>`;
+        }).join('') || '<p class="muted">No bays match this filter.</p>';
+        UI.$$('[data-bay-open]', view).forEach((b) => b.addEventListener('click', () => App.openBay(b.dataset.bayOpen)));
+      };
+      draw();
+      UI.$$('[data-bfilter]', view).forEach((b) => b.addEventListener('click', () => {
+        bayFilter = b.dataset.bfilter;
+        UI.$$('[data-bfilter]', view).forEach((x) => x.classList.toggle('active', x === b));
+        draw();
       }));
-
       const addBay = view.querySelector('#add-bay');
-      if (addBay) addBay.addEventListener('click', () => {
-        UI.modal({
-          title: 'Add a bay',
-          size: 'sm',
-          body: `<div class="form-errors" role="alert"></div>
-            ${UI.field('Bay code', UI.input('code', { value: `BAY-${bays.length + 1}`, required: true }))}
-            ${UI.field('Name', UI.input('name', { value: `Bay ${bays.length + 1}` }))}
-            ${UI.field('Capacity (bags)', UI.input('capacityBags', { type: 'number', min: 1, value: 600, required: true }))}`,
-          footer: '<button class="nm-btn" data-close>Cancel</button><button class="nm-btn primary" data-act="save">Add bay</button>',
-          onMount(el, close) {
-            el.querySelector('[data-act=save]').addEventListener('click', () => {
-              const f = UI.formData(el.querySelector('.modal-body'));
-              const code = String(f.code || '').toUpperCase().replace(/[^A-Z0-9-]/g, '');
-              const cap = Number(f.capacityBags) || 0;
-              const errors = [];
-              if (!code) errors.push('Enter a bay code');
-              if (bays.some((b) => b.code === code)) errors.push(`${code} already exists`);
-              if (cap < 1) errors.push('Enter the capacity in bags');
-              UI.showErrors(el, errors);
-              if (errors.length) return;
-              Store.add('bays', { code, name: f.name || code, capacityBags: cap }, 'bay-create');
-              VH.audit('bay.create', 'bay', code, `Capacity ${cap} bags`);
-              UI.toast('Bay added', 'ok');
-              close(); App.refresh();
-            });
-          },
-        });
-      });
+      if (addBay) addBay.addEventListener('click', () => App.editBay(null));
     },
   });
+
+  /** Everything about one bay, as it stands now. */
+  App.openBay = function (bayId) {
+    const x = VH.bayNow(bayId);
+    if (!x) return UI.toast('Bay not found', 'danger');
+    const s = Store.settings();
+    const bay = x.bay;
+    const state = x.count === 0 ? 'Empty' : x.ready ? 'Dry: use this bay first' : x.moisture === null ? 'No weight on record' : `Reads ${D.MOISTURE_LABEL[x.band]}`;
+    UI.modal({
+      title: `${bay.code}${bay.name && bay.name !== bay.code ? ` · ${bay.name}` : ''}`,
+      size: 'lg',
+      body: `
+        <div class="bay-now ${x.ready ? 'is-dry' : ''}">
+          <div><span class="muted small">In the bay now</span><b>${x.count.toLocaleString()} bags</b><span class="muted small">size ${x.capacity.toLocaleString()}${x.over ? ', over size' : `, room for ${Math.max(0, x.capacity - x.count).toLocaleString()}`}</span></div>
+          <div><span class="muted small">Moisture today</span><b class="t-${x.ready ? 'danger' : D.moistureTone(x.band)}">${x.moisture === null ? '—' : `${x.moisture}%`}</b><span class="muted small">${esc(state)}</span></div>
+          <div><span class="muted small">Bag weight today</span><b>${x.estKg ? `${x.estKg} kg` : '—'}</b><span class="muted small">${x.arrivalKg ? `came in at ${x.arrivalKg} kg` : 'no arrival weight'}</span></div>
+          <div><span class="muted small">Oldest load</span><b>${x.oldestDays === null ? '—' : `${x.oldestDays} day${x.oldestDays === 1 ? '' : 's'}`}</b><span class="muted small">${x.measured ? `last weighed ${esc(dOnly(x.measured.at))}: ${x.measured.kg} kg` : 'never weighed in the bay'}</span></div>
+        </div>
+        ${x.estKg ? VH.moistureScale(x.estKg, { compact: true }) : ''}
+        <h4>What is in it</h4>
+        ${x.loads.length ? `<div class="table-wrap"><table class="data-table">
+          <thead><tr><th>Load</th><th>Supplier</th><th>Type</th><th class="num">Bags</th><th>In the bay since</th><th class="num">On arrival</th><th class="num">Today</th></tr></thead>
+          <tbody>${x.loads.map((l) => `<tr>
+            <td data-label="Load"><b>${esc(l.delivery ? l.delivery.receiptNo : 'Not linked')}</b></td>
+            <td data-label="Supplier">${esc(l.delivery ? supplierName(l.delivery.supplierId) : '—')}</td>
+            <td data-label="Type">${esc(l.delivery ? VH.typeLabel(l.delivery.biomassType) : '—')}</td>
+            <td data-label="Bags" class="num">${l.count.toLocaleString()}</td>
+            <td data-label="In the bay since">${esc(dOnly(l.since))}<div class="muted small">${l.days === null ? '' : `${l.days} day${l.days === 1 ? '' : 's'}`}</div></td>
+            <td data-label="On arrival" class="num">${l.startKg ? `${l.startKg} kg` : '—'}<div class="muted small">${l.startMoisture === null ? '' : `${l.startMoisture}%`}</div></td>
+            <td data-label="Today" class="num">${l.estKg ? `${l.estKg} kg` : '—'}<div class="muted small">${l.moisture === null ? '' : `${l.moisture}%${l.measured ? ', from a weighing' : ''}`}</div></td>
+          </tr>`).join('')}</tbody></table></div>` : '<p class="muted">Nothing is stored in this bay.</p>'}
+        <p class="small muted">Today's figures are worked out from the arrival weight, less ${s.dryingKgPerDay ?? 0.6} kg per bag for each day in the bay, down to ${s.driestBagKg ?? 18} kg. Weigh a bag from the bay to replace the estimate with a real reading.</p>
+        ${Auth.can('usage.approve') || Auth.can('usage.consume') || Auth.can('bay.allocate') ? `<div class="bay-weigh">
+          ${UI.field('Weigh a bag from this bay (kg)', UI.input('bayWeigh', { type: 'number', min: 1, max: 100, step: '0.1', placeholder: 'kg' }))}
+          <button class="nm-btn" data-act="weigh" ${x.count ? '' : 'disabled'}>Save weight</button>
+        </div>` : ''}
+        ${bay.note ? `<p class="small"><b>Note:</b> ${esc(bay.note)}</p>` : ''}`,
+      footer: `
+        <button class="nm-btn" data-act="history">History</button>
+        ${Auth.can('bay.allocate') ? '<button class="nm-btn" data-act="edit">Edit bay</button>' : ''}
+        ${Auth.can('usage.request') ? `<button class="nm-btn primary" data-act="issue" ${x.count ? '' : 'disabled'}><i class="i i-flame"></i>Request issue</button>` : ''}`,
+      onMount(el, close) {
+        el.addEventListener('click', (e) => {
+          const btn = e.target.closest('[data-act]');
+          if (!btn) return;
+          const act = btn.dataset.act;
+          if (act === 'history') return App.bayHistory(bay.id);
+          if (act === 'edit') { close(); return App.editBay(bay.id); }
+          if (act === 'issue') { close(); return App.requestUsage(bay.id); }
+          if (act === 'weigh') {
+            const w = Number(el.querySelector('[name=bayWeigh]').value);
+            if (!(w > 0)) return UI.toast('Enter the bag weight in kg', 'warn');
+            Store.update('bays', bay.id, { lastWeighKg: w, lastWeighAt: new Date().toISOString(), lastWeighBy: Auth.current().email }, 'bay-weigh');
+            VH.audit('bay.weigh', 'bay', bay.code, `${bay.code} bag weighed ${w} kg · moisture ${D.moistureFromWeight(w, s)}%`);
+            UI.toast(`${bay.code}: ${w} kg, moisture ${D.moistureFromWeight(w, s)}%`, 'ok');
+            close(); App.refresh(); App.openBay(bay.id);
+          }
+        });
+      },
+    });
+  };
+
+  /** What went in and what was taken out, newest first. */
+  App.bayHistory = function (bayId) {
+    const bay = Store.byId('bays', bayId);
+    if (!bay) return;
+    const rows = VH.bayHistory(bayId);
+    const s = Store.settings();
+    const KIND = { in: ['Came in', 'ok'], out: ['Taken out', 'info'], weigh: ['Weighed', 'muted'] };
+    const totalIn = rows.filter((r) => r.kind === 'in').reduce((a, r) => a + (r.bags || 0), 0);
+    const totalOut = rows.filter((r) => r.kind === 'out').reduce((a, r) => a + (r.bags || 0), 0);
+    UI.modal({
+      title: `${bay.code} history`,
+      size: 'lg',
+      body: `
+        <div class="calc-strip" style="margin-bottom:14px">
+          <div><span class="muted small">Bags in, all time</span><b>${totalIn.toLocaleString()}</b></div>
+          <div><span class="muted small">Bags taken out</span><b>${totalOut.toLocaleString()}</b></div>
+          <div><span class="muted small">In the bay now</span><b>${VH.bagsInBay(bayId).toLocaleString()}</b></div>
+        </div>
+        ${UI.table({
+          rows, empty: 'Nothing has gone into or out of this bay yet.',
+          columns: [
+            { label: 'When', render: (r) => `${esc(dOnly(r.at))}<div class="muted small">${esc(String(dt(r.at)).split(', ').pop() || '')}</div>` },
+            { label: 'What', render: (r) => badge(KIND[r.kind][0], KIND[r.kind][1]) },
+            { label: 'Bags', cls: 'num', render: (r) => (r.bags === null ? '—' : `${r.kind === 'out' ? '− ' : r.kind === 'in' ? '+ ' : ''}${r.bags.toLocaleString()}`) },
+            { label: 'Bag weight', cls: 'num', render: (r) => (r.kgPerBag ? `${r.kgPerBag} kg` : '—') },
+            { label: 'Moisture', render: (r) => VH.moistureBadge(r.moisture) },
+            { label: 'Reference', render: (r) => `<b>${esc(r.ref || '')}</b><div class="muted small">${esc(r.note || '')}</div>` },
+            { label: 'Who', render: (r) => `<span class="small">${esc(r.who || '')}</span>` },
+          ],
+        })}
+        <p class="small muted">Moisture is read from the bag weight each time: on the weighbridge when a load came in, and at the gasifier when bags were taken out. A bag loses about ${s.dryingKgPerDay ?? 0.6} kg a day in between.</p>`,
+      footer: '<button class="nm-btn" data-act="print"><i class="i i-printer"></i>Print</button><button class="nm-btn primary" data-close>Done</button>',
+      onMount(el) {
+        el.querySelector('[data-act=print]').addEventListener('click', () => {
+          UI.print(`${VH.printHeader(`${bay.code} history`, `${rows.length} entries`)}
+            <table><thead><tr><th>When</th><th>What</th><th>Bags</th><th>Bag weight</th><th>Moisture</th><th>Reference</th><th>Who</th></tr></thead>
+            <tbody>${rows.map((r) => `<tr><td>${esc(dt(r.at))}</td><td>${KIND[r.kind][0]}</td><td class="num">${r.bags === null ? '' : r.bags}</td><td class="num">${r.kgPerBag ? `${r.kgPerBag} kg` : ''}</td><td class="num">${r.moisture === null ? '' : `${r.moisture}%`}</td><td>${esc(r.ref || '')} ${esc(r.note || '')}</td><td>${esc(r.who || '')}</td></tr>`).join('')}</tbody></table>`, `${bay.code} history`);
+        });
+      },
+    });
+  };
+
+  /** Add a bay, or change one: name, size, note. An empty bay can be removed. */
+  App.editBay = function (bayId) {
+    if (!Auth.can('bay.allocate')) return UI.toast('Your role cannot change bays', 'danger');
+    const bay = bayId ? Store.byId('bays', bayId) : null;
+    const bays = Store.where('bays', (b) => !b.deleted);
+    const nextNo = bays.reduce((a, b) => Math.max(a, D.parseSerialNumber(b.code) || 0), 0) + 1;
+    const holds = bay ? VH.bagsInBay(bay.id) : 0;
+    UI.modal({
+      title: bay ? `Edit ${bay.code}` : 'Add a bay',
+      size: 'sm',
+      body: `<div class="form-errors" role="alert"></div>
+        ${UI.field('Bay code', UI.input('code', { value: bay ? bay.code : `BAY-${nextNo}`, required: true }))}
+        ${UI.field('Name', UI.input('name', { value: bay ? (bay.name || '') : `Bay ${nextNo}` }))}
+        ${UI.field('Size (bags)', UI.input('capacityBags', { type: 'number', min: 1, value: bay ? (bay.capacityBags || 200) : (Number(Store.settings().bayCapacityBags) || 200), required: true }),
+          bay ? `Holds ${holds} bags now. The size is a guide: a bay can be filled past it.` : 'You can change this at any time.')}
+        ${UI.field('Note', UI.input('note', { value: bay ? (bay.note || '') : '', placeholder: 'Under the roof, near the gasifier…' }))}`,
+      footer: `${bay ? `<button class="nm-btn danger-ghost" data-act="remove" ${holds ? 'disabled title="Only an empty bay can be removed"' : ''}>Remove bay</button>` : ''}
+        <button class="nm-btn" data-close>Cancel</button><button class="nm-btn primary" data-act="save">${bay ? 'Save bay' : 'Add bay'}</button>`,
+      onMount(el, close) {
+        el.querySelector('[data-act=save]').addEventListener('click', () => {
+          const f = UI.formData(el.querySelector('.modal-body'));
+          const code = String(f.code || '').toUpperCase().trim().replace(/[^A-Z0-9-]/g, '');
+          const cap = Math.round(Number(f.capacityBags) || 0);
+          const errors = [];
+          if (!code) errors.push('Enter a bay code');
+          if (bays.some((b) => b.code === code && (!bay || b.id !== bay.id))) errors.push(`${code} already exists`);
+          if (cap < 1) errors.push('Enter the size in bags');
+          UI.showErrors(el, errors);
+          if (errors.length) return;
+          const patch = { code, name: f.name || code, capacityBags: cap, note: f.note || '' };
+          if (bay) {
+            Store.update('bays', bay.id, patch, 'bay-update');
+            if (code !== bay.code) {
+              // keep the bay name on the bags that are in it
+              for (const b of Store.where('bags', (x) => x.bayId === bay.id)) { b.bayCode = code; b.updatedAt = new Date().toISOString(); Store.markDirty('bags', b.id); }
+              Store.save('bay-rename');
+            }
+            VH.audit('bay.update', 'bay', code, `${code} · size ${cap} bags`);
+          } else {
+            Store.add('bays', patch, 'bay-create');
+            VH.audit('bay.create', 'bay', code, `Size ${cap} bags`);
+          }
+          UI.toast(bay ? 'Bay saved' : 'Bay added', 'ok');
+          close(); App.refresh();
+        });
+        const rm = el.querySelector('[data-act=remove]');
+        if (rm) rm.addEventListener('click', async () => {
+          if (VH.bagsInBay(bay.id)) return UI.toast('Only an empty bay can be removed', 'warn');
+          const ok = await UI.confirm({ title: `Remove ${bay.code}?`, message: 'The bay disappears from the yard. Its history stays on the deliveries and issues that used it.', confirmText: 'Remove bay' });
+          if (!ok) return;
+          Store.remove('bays', bay.id, 'bay-remove');
+          VH.audit('bay.remove', 'bay', bay.code, `${bay.code} removed`);
+          UI.toast(`${bay.code} removed`, 'ok');
+          close(); App.refresh();
+        });
+      },
+    });
+  };
 
   /* ============================== GASIFIER =========================== */
   App.register('gasifier', {
@@ -324,26 +480,22 @@
       const s = Store.settings();
       const requests = Store.all('usageRequests').slice().sort((a, b) => Date.parse(b.requestedAt) - Date.parse(a.requestedAt));
       const open = requests.filter((r) => r.status === 'PENDING' || r.status === 'APPROVED');
-      const bays = Store.where('bays', (b) => !b.deleted).map((b) => {
-        const bags = Store.where('bags', (x) => x.bayId === b.id && x.status === 'STORED');
-        return { bay: b, count: bags.length, avgKg: bayAvgKg(bags) };
-      });
+      // Only bays with stock, driest first: that is the order to use them in.
+      const bays = Store.where('bays', (b) => !b.deleted).map((b) => VH.bayNow(b)).filter((x) => x.count > 0)
+        .sort((a, b) => (a.moisture === null ? 999 : a.moisture) - (b.moisture === null ? 999 : b.moisture));
 
       view.innerHTML = `
         <section class="nm-card pad">
           <div class="card-head"><h3>Which bay to draw from</h3>
             ${Auth.can('usage.request') ? '<button class="nm-btn primary" id="new-usage"><i class="i i-plus"></i>New issue request</button>' : ''}</div>
-          <p class="muted">The supervisor picks the bay after weighing a bag: the heavier the bag, the wetter the biomass. Wet stock is left to dry or mixed with a drier bay.</p>
+          <p class="muted">Bays with stock, driest first. The moisture is today's estimate from the bag weight and the days in the bay; the supervisor can weigh a bag to confirm. Bays marked dry should go to the gasifier first.</p>
           <div class="bay-grid tight">
-            ${bays.map(({ bay, count, avgKg }) => {
-              const moisture = avgKg ? D.moistureFromWeight(avgKg, s) : null;
-              const band = D.moistureBand(moisture, s);
-              return `<div class="nm-inset pad-sm bay-mini">
-                <div class="bay-head"><b>${esc(bay.code)}</b>${badge(`${count} bags`, count ? 'ok' : 'muted')}</div>
-                <div class="bay-mini-row"><span class="muted small">Average bag</span><b>${avgKg ? `${avgKg} kg` : '—'}</b></div>
-                <div class="bay-mini-row"><span class="muted small">Moisture</span><b class="t-${D.moistureTone(band)}">${moisture === null ? '—' : `${moisture}% · ${D.MOISTURE_LABEL[band]}`}</b></div>
-              </div>`;
-            }).join('')}
+            ${bays.map((x) => `<button class="nm-inset pad-sm bay-mini ${x.ready ? 'is-dry' : ''}" data-bay-open="${x.bay.id}">
+                <div class="bay-head"><b>${esc(x.bay.code)}</b>${badge(`${x.count} bags`, 'ok')}</div>
+                <div class="bay-mini-row"><span class="muted small">Bag today</span><b>${x.estKg ? `${x.estKg} kg` : '—'}</b></div>
+                <div class="bay-mini-row"><span class="muted small">Moisture</span><b class="t-${x.ready ? 'danger' : D.moistureTone(x.band)}">${x.moisture === null ? '—' : `${x.moisture}% · ${x.ready ? 'dry, use first' : D.MOISTURE_LABEL[x.band]}`}</b></div>
+                <div class="bay-mini-row"><span class="muted small">In the bay</span><b>${x.oldestDays === null ? '—' : `${x.oldestDays} day${x.oldestDays === 1 ? '' : 's'}`}</b></div>
+              </button>`).join('') || '<p class="muted">No bay has stock.</p>'}
           </div>
         </section>
 
@@ -383,6 +535,7 @@
       const nw = view.querySelector('#new-usage');
       if (nw) nw.addEventListener('click', () => App.requestUsage(null));
       UI.$$('[data-approve]', view).forEach((b) => b.addEventListener('click', () => App.approveUsage(b.dataset.approve)));
+      UI.$$('[data-bay-open]', view).forEach((b) => b.addEventListener('click', () => App.openBay(b.dataset.bayOpen)));
       UI.$$('[data-consume]', view).forEach((b) => b.addEventListener('click', () => App.consumeUsage(b.dataset.consume)));
     },
   });
@@ -423,24 +576,22 @@
     const r = Store.byId('usageRequests', id);
     if (!r) return;
     const s = Store.settings();
-    const bays = Store.where('bays', (b) => !b.deleted).map((b) => {
-      const count = VH.bagsInBay(b.id);
-      const bags = Store.where('bags', (x) => x.bayId === b.id && x.status === 'STORED');
-      const avg = bayAvgKg(bags);
-      return { bay: b, count, avg, moisture: avg ? D.moistureFromWeight(avg, s) : null };
-    });
+    // bays that hold something, driest first
+    const bays = Store.where('bays', (b) => !b.deleted).map((b) => VH.bayNow(b)).filter((x) => x.count > 0 || x.bay.id === r.bayId)
+      .sort((a, b) => (a.moisture === null ? 999 : a.moisture) - (b.moisture === null ? 999 : b.moisture))
+      .map((x) => ({ bay: x.bay, count: x.count, avg: x.estKg, moisture: x.moisture, ready: x.ready, days: x.oldestDays }));
 
     UI.modal({
       title: `Approve ${r.requestNo}`,
       size: 'lg',
-      body: `<p class="muted">Weigh a bag from each candidate bay and pick the driest suitable stock. The operator's request was for <b>${r.bags} bags</b> from ${esc(r.bayCode)}.</p>
+      body: `<p class="muted">Bays with stock, driest first. Pick the bay, and weigh a bag from it if you want a real reading. The operator asked for <b>${r.bags} bags</b> from ${esc(r.bayCode)}.</p>
         <div class="nm-inset pad-sm">
-          <table class="mini"><thead><tr><th>Use</th><th>Bay</th><th class="num">Bags</th><th class="num">Avg bag</th><th>Moisture</th><th>Test bag weight (kg)</th></tr></thead>
+          <table class="mini"><thead><tr><th>Use</th><th>Bay</th><th class="num">Bags</th><th class="num">Bag today</th><th>Moisture today</th><th>Test bag weight (kg)</th></tr></thead>
           <tbody>${bays.map((b) => {
             const band = D.moistureBand(b.moisture, s);
             return `<tr>
               <td><input type="radio" name="pick" value="${b.bay.id}" ${b.bay.id === r.bayId ? 'checked' : ''} ${b.count ? '' : 'disabled'} /></td>
-              <td><b>${esc(b.bay.code)}</b></td>
+              <td><b>${esc(b.bay.code)}</b>${b.ready ? ' <span class="pill pill-dry">dry, use first</span>' : ''}${b.days === null || b.days === undefined ? '' : `<div class="muted small">${b.days} day${b.days === 1 ? '' : 's'} in the bay</div>`}</td>
               <td class="num">${b.count}</td>
               <td class="num">${b.avg ? `${b.avg} kg` : '—'}</td>
               <td data-moist="${b.bay.id}">${VH.moistureBadge(b.moisture)}</td>
@@ -471,6 +622,8 @@
             testBagKg: testWeight,
             testMoisturePct: testWeight ? D.moistureFromWeight(testWeight, s) : null,
           }, 'usage-approve');
+          // a test bag is a real reading of the bay: the estimate starts again from it
+          if (testWeight) Store.update('bays', bay.id, { lastWeighKg: testWeight, lastWeighAt: new Date().toISOString(), lastWeighBy: Auth.current().email }, 'bay-weigh');
           VH.audit('usage.approve', 'usage', r.id, `${r.requestNo} approved from ${bay.code}${testWeight ? ` · test bag ${testWeight} kg` : ''}`);
           UI.toast('Approved — the operator can now draw the bags', 'ok');
           close(); App.refresh();
@@ -535,6 +688,8 @@
             totalKg: D.round2(avg * take), consumedAt: now, consumedBy: Auth.current().email,
             bagSerials: consumed.map((b) => b.serial),
           }, 'usage-consume');
+          // the three bags just weighed are the newest reading of what is left in the bay
+          if (Store.byId('bays', r.bayId)) Store.update('bays', r.bayId, { lastWeighKg: avg, lastWeighAt: now, lastWeighBy: Auth.current().email }, 'bay-weigh');
 
           VH.audit('usage.consume', 'usage', r.id, `${take} bags from ${r.bayCode} · avg ${avg} kg · moisture ${moisture}% · ${D.round2(avg * take)} kg`);
           if (D.moistureBand(moisture, s) !== 'OK') {

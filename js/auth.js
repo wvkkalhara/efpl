@@ -454,7 +454,15 @@
       if (!Auth.can('user.manage')) throw new Error('Not allowed');
       const clean = String(email || '').trim().toLowerCase();
       if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(clean)) throw new Error('Invalid email');
-      if (Store.all('users').some((u) => (u.email || '').toLowerCase() === clean)) throw new Error('That email already exists');
+      const old = Store.all('users').find((u) => (u.email || '').toLowerCase() === clean);
+      if (old && !old.deleted) throw new Error('That email already exists');
+      if (old) {
+        // the same person coming back after being removed: bring the account back
+        return Store.update('users', old.id, {
+          name: String(name || '').trim() || old.name, role: window.Domain.ROLES.includes(role) ? role : 'operator',
+          active: true, deleted: false, deletedAt: null, removedBy: null,
+        }, 'user-restore');
+      }
       if (isSuperEmail(clean)) throw new Error('The owner account is created automatically');
       const rec = Store.add('users', {
         email: clean, name: String(name || '').trim() || clean.split('@')[0],
@@ -462,6 +470,20 @@
         active: active !== false, createdBy: session && session.email,
       }, 'user-create');
       return rec;
+    },
+
+    /**
+     * Take someone off the staff list. The account is switched off (which
+     * signs them out everywhere and makes the database refuse them) and
+     * hidden. Nothing they recorded is touched.
+     */
+    removeUser(id) {
+      if (!Auth.can('user.manage')) throw new Error('Not allowed');
+      const target = Store.byId('users', id);
+      if (!target) throw new Error('User not found');
+      if (isSuperEmail(target.email)) throw new Error('That account cannot be removed');
+      if (session && String(session.email).toLowerCase() === String(target.email).toLowerCase()) throw new Error('You cannot remove your own account');
+      return Store.update('users', id, { active: false, deleted: true, deletedAt: new Date().toISOString(), removedBy: session && session.email }, 'user-remove');
     },
 
     updateUser(id, patch) {

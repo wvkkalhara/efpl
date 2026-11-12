@@ -23,20 +23,20 @@
   const PERMISSIONS = {
     super_admin: ['*'],
     admin: [
-      'supplier.write', 'farmer.write', 'delivery.create', 'delivery.accept',
+      'supplier.write', 'delivery.create', 'delivery.accept',
       'bag.generate', 'bag.issue', 'bay.allocate', 'usage.request', 'usage.approve',
-      'usage.consume', 'quality.report', 'quality.resolve', 'payment.split', 'payment.approve',
+      'usage.consume', 'quality.report', 'quality.resolve', 'payment.approve',
       'payment.release', 'payment.pay', 'returns.write', 'report.read', 'audit.read',
       'user.manage', 'settings.write', 'data.manage',
     ],
     supervisor: [
-      'supplier.write', 'farmer.write', 'delivery.create', 'delivery.accept',
+      'supplier.write', 'delivery.create', 'delivery.accept',
       'bay.allocate', 'bag.issue', 'usage.request', 'usage.approve', 'quality.report',
-      'quality.resolve', 'payment.split', 'payment.approve', 'returns.write', 'report.read',
+      'quality.resolve', 'payment.approve', 'returns.write', 'report.read',
     ],
     storekeeper: [
-      'supplier.write', 'farmer.write', 'bag.generate', 'bag.issue', 'delivery.create',
-      'usage.request', 'quality.report', 'payment.split', 'returns.write',
+      'supplier.write', 'bag.generate', 'bag.issue', 'delivery.create',
+      'usage.request', 'quality.report', 'returns.write',
     ],
     operator: ['usage.request', 'usage.consume', 'quality.report'],
     accounts: ['payment.release', 'payment.pay', 'report.read'],
@@ -48,7 +48,7 @@
   const ROLE_INFO = {
     admin: 'Everything: all yard work, payments, people and their roles, prices and settings.',
     supervisor: 'Accepts trucks and sets deductions, gives bays, approves gasifier issues, authorises payments, closes quality issues.',
-    storekeeper: 'Receives trucks, numbers and issues bags, enters the farmer declaration, checks returned bags, keeps suppliers and farmers.',
+    storekeeper: 'Receives trucks, numbers and issues bags, checks returned bags, keeps the supplier list.',
     operator: 'Asks for biomass for the gasifier, weighs and feeds it, reports quality problems.',
     accounts: 'Releases authorised payments to Head Office and marks them paid. Sees deliveries, suppliers and reports.',
     auditor: 'Sees every screen and the activity log, and cannot change anything.',
@@ -80,12 +80,10 @@
     { perm: 'usage.consume', group: 'Gasifier', label: 'Weigh and feed the gasifier' },
     { perm: 'quality.report', group: 'Quality', label: 'Report quality problems and trace bags' },
     { perm: 'quality.resolve', group: 'Quality', label: 'Close quality problems' },
-    { perm: 'payment.split', group: 'Payments', label: 'Enter the farmer declaration' },
     { perm: 'payment.approve', group: 'Payments', label: 'Authorise payments and change deductions' },
     { perm: 'payment.release', group: 'Payments', label: 'Release payments to Head Office' },
     { perm: 'payment.pay', group: 'Payments', label: 'Mark payments as paid' },
     { perm: 'supplier.write', group: 'Records', label: 'Add and edit suppliers' },
-    { perm: 'farmer.write', group: 'Records', label: 'Add and edit farmers' },
     { perm: 'report.read', group: 'Records', label: 'See reports' },
   ];
   const GRANTABLE = TASKS.map((t) => t.perm);
@@ -188,7 +186,7 @@
 
   function sampleSizeFor(bagCount, settings) {
     const pct = Number(settings.sampleSizePct) || 5;
-    const min = Number(settings.minSampleSize) || 3;
+    const min = Number(settings.minSampleSize) || 1;
     return Math.max(min, Math.ceil((bagCount * pct) / 100));
   }
 
@@ -274,6 +272,25 @@
     if (pct >= (Number((settings || {}).moistureWarnPct) || 30)) return 'WARN';
     return 'OK';
   }
+  /* ------------------------- drying in the bay -----------------------
+     Biomass dries while it waits. The site figure is 0.6 kg a day per bag
+     (a 50 kg bag is about 30 kg after a month), until the bag is as dry as
+     it gets. This estimates what a bag weighs today from what it weighed
+     on a known day, so a bay's moisture is "now", not "on arrival". */
+  function driedBagKg(startKg, sinceISO, settings, nowMs) {
+    const start = Number(startKg);
+    if (!start || !Number.isFinite(start)) return null;
+    const s = settings || {};
+    const rate = Number.isFinite(Number(s.dryingKgPerDay)) && s.dryingKgPerDay !== null && s.dryingKgPerDay !== '' ? Math.max(0, Number(s.dryingKgPerDay)) : 0.6;
+    const floor = Number(s.driestBagKg) > 0 ? Number(s.driestBagKg) : 18;
+    const since = Date.parse(sinceISO || 0);
+    const days = Number.isFinite(since) ? Math.max(0, ((nowMs || Date.now()) - since) / 864e5) : 0;
+    // never "dries" a bag that was already lighter than the floor back up to it
+    return round2(Math.max(Math.min(start, floor), start - rate * days));
+  }
+  const daysSince = (iso, nowMs) => { const t = Date.parse(iso || 0); return Number.isFinite(t) ? Math.max(0, Math.floor(((nowMs || Date.now()) - t) / 864e5)) : null; };
+  const moistureReadyPct = (settings) => { const v = Number((settings || {}).moistureReadyPct); return Number.isFinite(v) && v > 0 ? v : 25; };
+
   const MOISTURE_LABEL = { OK: 'dry enough', WARN: 'damp', HIGH: 'wet', UNKNOWN: '' };
   const moistureTone = (band) => (band === 'OK' ? 'ok' : band === 'WARN' ? 'warn' : band === 'HIGH' ? 'danger' : 'muted');
 
@@ -318,14 +335,14 @@
 
   /* ---------------------------- payments ----------------------------- */
   const PAYMENT_FLOW = {
-    DRAFT: ['PENDING_SUPERVISOR'],
+    DRAFT: ['PENDING_SUPERVISOR', 'APPROVED'],
     PENDING_SUPERVISOR: ['APPROVED', 'DRAFT'],
     APPROVED: ['SENT_TO_HEAD_OFFICE'],
     SENT_TO_HEAD_OFFICE: ['PAID'],
     PAID: [],
   };
   const PAYMENT_LABEL = {
-    DRAFT: 'Draft — farmer split pending',
+    DRAFT: 'Draft',
     PENDING_SUPERVISOR: 'Awaiting supervisor authorisation',
     APPROVED: 'Authorised — to be released',
     SENT_TO_HEAD_OFFICE: 'Sent to Head Office',
@@ -363,7 +380,6 @@
 
     const delivery = bag.deliveryId ? Store.byId('deliveries', bag.deliveryId) : null;
     const supplier = bag.supplierId ? Store.byId('suppliers', bag.supplierId) : null;
-    const farmer = bag.farmerId ? Store.byId('farmers', bag.farmerId) : null;
     const issue = bag.bagIssueId ? Store.byId('bagIssues', bag.bagIssueId) : null;
     // A bag is re-used round after round, so only the run recorded on the
     // bag itself belongs to its current trip.
@@ -372,7 +388,7 @@
     const quality = Store.all('qualityIssues').filter((q) => q.bagSerial === bag.serial);
     const events = Store.all('bagEvents').filter((e) => e.serial === bag.serial);
 
-    return { bag, delivery, supplier, farmer, issue, usage, payment, quality, events };
+    return { bag, delivery, supplier, issue, usage, payment, quality, events };
   }
 
   /* --------------------------- barcode (Code 39) --------------------- */
@@ -439,6 +455,7 @@
     BAG_STATUS, BAG_STATUS_LABEL, BAG_TRANSITIONS, canTransition,
     round2, sampleSizeFor, evaluateFillCheck, moistureFromWeight, moistureBand,
     moistureCalibration, weightForMoisture, moistureHighPct, MOISTURE_LABEL, moistureTone, applyDeduction, suggestedDeduction,
+    driedBagKg, daysSince, moistureReadyPct,
     weighTruck, avgBagWeight, PAYMENT_FLOW, PAYMENT_LABEL, paymentCanGo,
     bagSerial, serialRange, parseSerialNumber, traceBag, code39SVG,
     money, kg, pct, dt, dOnly, todayISO,

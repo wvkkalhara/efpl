@@ -33,10 +33,103 @@
         .slice().sort((a, b) => a.name.localeCompare(b.name))
         .map((s) => ({ value: s.id, label: `${s.code} · ${s.name}` }));
     },
-    farmerOptions(supplierId) {
-      return Store.where('farmers', (f) => !f.deleted && (!supplierId || f.supplierId === supplierId))
-        .slice().sort((a, b) => a.name.localeCompare(b.name))
-        .map((f) => ({ value: f.id, label: `${f.code} · ${f.name} (${f.village})` }));
+    /* ------------------------------ bank ------------------------------
+       Where the supplier is paid. Older records hold one free-text "bank"
+       line; newer ones hold bank, branch, account number and account name. */
+    hasBank(sup) { return !!(sup && (sup.bankAccount || sup.bankName || sup.bank)); },
+    bankText(sup) {
+      if (!VH.hasBank(sup)) return 'No bank details on file';
+      const parts = [sup.bankName, sup.bankBranch ? `${sup.bankBranch} branch` : '', sup.bankAccount ? `A/C ${sup.bankAccount}` : '',
+        sup.bankAccountName && sup.bankAccountName !== sup.name ? `in the name of ${sup.bankAccountName}` : ''].filter(Boolean);
+      return parts.length ? parts.join(', ') : String(sup.bank || '');
+    },
+    bankHtml(sup) {
+      if (!VH.hasBank(sup)) return '<p class="t-warn small">No bank details on file for this supplier. Add them under Suppliers so Head Office can pay.</p>';
+      if (!sup.bankAccount && !sup.bankName) return `<p>${esc(sup.bank)}</p>`;
+      return `<table class="mini bank-box">
+        <tr><td>Account name</td><td><b>${esc(sup.bankAccountName || sup.name || '')}</b></td></tr>
+        <tr><td>Account number</td><td><b class="mono">${esc(sup.bankAccount || '—')}</b></td></tr>
+        <tr><td>Bank</td><td>${esc(sup.bankName || '—')}${sup.bankBranch ? `, ${esc(sup.bankBranch)} branch` : ''}</td></tr>
+      </table>`;
+    },
+
+    /* ------------------------------ bays ------------------------------
+       What is in a bay right now, and how dry it is today. Biomass dries
+       as it waits (Domain.driedBagKg), so the figure moves every day
+       without anyone weighing anything. A real weighing of the bay (a
+       test bag at approval, the three bags at the gasifier) replaces the
+       estimate from that moment on. */
+    bayNow(bayOrId) {
+      const bay = typeof bayOrId === 'string' ? Store.byId('bays', bayOrId) : bayOrId;
+      if (!bay) return null;
+      const s = Store.settings();
+      const bags = Store.where('bags', (b) => b.bayId === bay.id && b.status === 'STORED');
+      const groups = new Map();
+      for (const b of bags) {
+        const k = b.deliveryId || '';
+        if (!groups.has(k)) groups.set(k, { deliveryId: k, count: 0, since: b.deliveredAt || null });
+        const g = groups.get(k);
+        g.count++;
+        if (b.deliveredAt && (!g.since || b.deliveredAt < g.since)) g.since = b.deliveredAt;
+      }
+      const measuredAt = bay.lastWeighKg && bay.lastWeighAt ? Date.parse(bay.lastWeighAt) : NaN;
+      const loads = [];
+      let kgSum = 0, kgN = 0, arrSum = 0, arrN = 0;
+      for (const g of groups.values()) {
+        const d = g.deliveryId ? Store.byId('deliveries', g.deliveryId) : null;
+        const since = g.since || (d && (d.acceptedAt || d.deliveredAt)) || null;
+        const startKg = d && d.avgBagKg ? d.avgBagKg : null;
+        // a weighing of the bay after this load came in is better than the estimate
+        const useMeasured = Number.isFinite(measuredAt) && since && measuredAt > Date.parse(since);
+        const estKg = useMeasured ? D.driedBagKg(bay.lastWeighKg, bay.lastWeighAt, s) : D.driedBagKg(startKg, since, s);
+        loads.push({
+          delivery: d, count: g.count, since, days: D.daysSince(since), startKg,
+          startMoisture: startKg ? D.moistureFromWeight(startKg, s) : null,
+          estKg, moisture: estKg ? D.moistureFromWeight(estKg, s) : null, measured: !!useMeasured,
+        });
+        if (estKg) { kgSum += estKg * g.count; kgN += g.count; }
+        if (startKg) { arrSum += startKg * g.count; arrN += g.count; }
+      }
+      loads.sort((a, b) => String(a.since || '').localeCompare(String(b.since || '')));
+      const estKg = kgN ? D.round2(kgSum / kgN) : null;
+      const moisture = estKg ? D.moistureFromWeight(estKg, s) : null;
+      const capacity = Number(bay.capacityBags) || 0;
+      const ready = moisture !== null && bags.length > 0 && moisture <= D.moistureReadyPct(s);
+      return {
+        bay, count: bags.length, capacity,
+        pctFull: capacity ? Math.round((bags.length / capacity) * 100) : 0, over: capacity > 0 && bags.length > capacity,
+        loads, estKg, moisture, band: D.moistureBand(moisture, s), ready,
+        arrivalKg: arrN ? D.round2(arrSum / arrN) : null,
+        oldestDays: loads.length ? Math.max.apply(null, loads.map((l) => l.days || 0)) : null,
+        measured: bay.lastWeighKg && bay.lastWeighAt ? { kg: bay.lastWeighKg, at: bay.lastWeighAt } : null,
+      };
+    },
+
+    /** Everything that went into and came out of a bay, newest first, with the moisture each time. */
+    bayHistory(bayId) {
+      const s = Store.settings();
+      const rows = [];
+      for (const d of Store.all('deliveries')) {
+        if (d.deleted || d.status !== 'ACCEPTED') continue;
+        for (const a of d.allocations || []) {
+          if (a.bayId !== bayId) continue;
+          rows.push({
+            at: d.acceptedAt || d.deliveredAt, kind: 'in', bags: a.bags, kgPerBag: d.avgBagKg || null,
+            moisture: d.avgBagKg ? D.moistureFromWeight(d.avgBagKg, s) : null,
+            ref: d.receiptNo, who: (Store.byId('suppliers', d.supplierId) || {}).name || '', note: VH.typeLabel(d.biomassType),
+          });
+        }
+      }
+      for (const u of Store.all('usageRequests')) {
+        if (u.deleted || u.bayId !== bayId) continue;
+        if (u.testBagKg && u.approvedAt) {
+          rows.push({ at: u.approvedAt, kind: 'weigh', bags: null, kgPerBag: u.testBagKg, moisture: D.moistureFromWeight(u.testBagKg, s), ref: u.requestNo, who: u.approvedBy || '', note: 'Test bag weighed before approval' });
+        }
+        if (u.status === 'CONSUMED') {
+          rows.push({ at: u.consumedAt, kind: 'out', bags: u.bags, kgPerBag: u.avgBagKg || null, moisture: u.avgBagKg ? D.moistureFromWeight(u.avgBagKg, s) : null, ref: u.requestNo, who: u.consumedBy || '', note: u.totalKg ? `${D.kg(u.totalKg)} to the gasifier` : 'To the gasifier' });
+        }
+      }
+      return rows.sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
     },
     bayOptions() {
       return Store.where('bays', (b) => !b.deleted).map((b) => ({ value: b.id, label: `${b.code} — ${b.name}` }));
@@ -88,10 +181,11 @@
       add('usage.approve', toApprove, 'warn', `${n(toApprove, 'gasifier request needs', 'gasifier requests need')} your approval`, 'gasifier');
       const toWeigh = count(usage, 'APPROVED');
       add('usage.consume', toWeigh, 'warn', `${n(toWeigh, 'approved issue is', 'approved issues are')} ready to weigh and feed to the gasifier`, 'gasifier');
-      const drafts = count(pays, 'DRAFT');
-      add('payment.split', drafts, 'warn', `${n(drafts, 'payment needs', 'payments need')} the farmer declaration`, 'payments');
-      const toAuth = count(pays, 'PENDING_SUPERVISOR');
-      add('payment.approve', toAuth, 'warn', `${n(toAuth, 'payment', 'payments')} to authorise, worth ${money(sum('PENDING_SUPERVISOR'))}`, 'payments');
+      // "Draft" only exists on payments made before the farmer step was removed
+      const toAuth = count(pays, 'PENDING_SUPERVISOR') + count(pays, 'DRAFT');
+      add('payment.approve', toAuth, 'warn', `${n(toAuth, 'payment', 'payments')} to authorise, worth ${money(sum('PENDING_SUPERVISOR') + sum('DRAFT'))}`, 'payments');
+      const dry = Store.where('bays', (b) => !b.deleted).filter((b) => { const now = VH.bayNow(b); return now && now.ready; }).length;
+      add('usage.approve', dry, 'danger', `${n(dry, 'bay is', 'bays are')} dry and should be used first`, 'bays');
       const toRelease = count(pays, 'APPROVED');
       add('payment.release', toRelease, 'info', `${n(toRelease, 'authorised payment', 'authorised payments')} to release to Head Office, worth ${money(sum('APPROVED'))}`, 'payments');
       const toPay = count(pays, 'SENT_TO_HEAD_OFFICE');
@@ -228,7 +322,7 @@
     },
 
     printHeader(title, meta) {
-      return `<div class="row"><div>
+      return `<div class="row print-head"><img class="print-logo" src="assets/enerfab-logo.png" alt="EnerFab" /><div class="print-title">
           <div class="co">EnerFab (Pvt) Ltd · Green Engineering</div>
           <h1>${esc(title)}</h1>
           <div class="meta">${esc(meta || '')}</div>
@@ -335,7 +429,7 @@
         ${App.canSee('trace') ? `<section class="nm-card pad quick-trace">
           <div>
             <h3>Trace a bag</h3>
-            <p class="muted">Type the number on the tag to see its supplier, farmer, bay and gasifier run.</p>
+            <p class="muted">Type the number on the tag to see its supplier, bay and gasifier run.</p>
           </div>
           <form class="trace-search" id="dash-trace">
             <input class="nm-input" id="dash-trace-input" placeholder="${esc(Store.settings().bagSerialPrefix)}-000302" autocomplete="off" aria-label="Bag serial" />
@@ -399,12 +493,16 @@
 
           <section class="nm-card pad">
             <div class="step-head"><span class="step-no">1</span><div><h3>Who delivered?</h3>
-              <p class="muted small">Supplier and vehicle details. Farmers are attached to the supplier, not to the truck.</p></div></div>
+              <p class="muted small">Find the supplier, then enter the vehicle and driver.</p></div></div>
+            <div class="supplier-pick">
+              <input class="nm-input" id="sup-find" type="search" placeholder="Search supplier by name, code, phone or village" autocomplete="off" aria-label="Search suppliers" />
+              ${Auth.can('supplier.write') ? '<button type="button" class="nm-btn" id="sup-new"><i class="i i-plus"></i>New supplier</button>' : ''}
+            </div>
             <div class="grid-3">
-              ${UI.field('Supplier', UI.select('supplierId', VH.supplierOptions(), { required: true, placeholder: 'Select supplier…' }))}
+              ${UI.field('Supplier', UI.select('supplierId', VH.supplierOptions(), { required: true, placeholder: 'Select supplier…' }), '<span id="sup-count"></span>')}
               ${UI.field('Biomass type', UI.select('biomassType', VH.biomassTypes().map((t) => ({ value: t.id, label: t.label })), { required: true }),
                 Auth.can('settings.write') ? '<button type="button" class="link" id="add-type"><i class="i i-plus"></i>Add another type</button>' : '')}
-              ${UI.field('Vehicle number', UI.input('vehicleNo', { placeholder: 'WP LH-4521', required: true }))}
+              ${UI.field('Vehicle number', UI.input('vehicleNo', { placeholder: 'SG LH-4521', required: true }))}
               ${UI.field('Driver name', UI.input('driverName', { placeholder: 'Full name', required: true }))}
               ${UI.field('Driver NIC', UI.input('driverNic', { placeholder: '781234567V' }))}
               ${UI.field('Weighbridge slip no.', UI.input('weighbridgeSlip', { placeholder: 'WB-8893' }))}
@@ -425,7 +523,11 @@
 
           <section class="nm-card pad">
             <div class="step-head"><span class="step-no">3</span><div><h3>Random fill check</h3>
-              <p class="muted small">Empty the sampled bags into the measuring drum and type each fill height as a % of the drum. The agreement is ${s.fillThresholdPct}% average.</p></div></div>
+              <p class="muted small">Empty every sampled bag into the measuring drum and type each fill height as a % of the drum. All of the ${s.sampleSizePct}% sample must be entered. The agreement is ${s.fillThresholdPct}% average.</p></div></div>
+            <div class="row-actions" style="margin:0 0 14px">
+              <button type="button" class="nm-btn" id="print-fill-sheet"><i class="i i-printer"></i>Print a blank sheet to fill in by hand</button>
+              <span class="muted small">Write the readings on paper at the drum, then type them in here.</span>
+            </div>
             <div class="fill-check">
               <div class="fill-inputs" id="fill-inputs"></div>
               <div class="fill-result nm-inset" id="fill-result"></div>
@@ -470,17 +572,27 @@
         const count = Number(bagCountEl.value) || 0;
         const sample = D.sampleSizeFor(count || 1, s2);
         const wrap = form.querySelector('#fill-inputs');
-        wrap.innerHTML = `<div class="fill-head">Sample size: <b>${sample}</b> bag(s)
-            <span class="muted small">(${s2.sampleSizePct}% of ${count || 0}, minimum ${s2.minSampleSize})</span></div>
-          <div class="fill-grid">${Array.from({ length: Math.min(sample, 20) }, (_, i) => `
+        const done = fills.slice(0, sample).filter((n) => Number.isFinite(n)).length;
+        wrap.innerHTML = `<div class="fill-head">Sample: <b>${sample}</b> bag(s)
+            <span class="muted small">(${s2.sampleSizePct}% of ${count || 0} bags)</span>
+            <span class="fill-progress ${done === sample ? 't-ok' : 't-warn'}" id="fill-progress">${done} of ${sample} entered</span></div>
+          <div class="fill-grid">${Array.from({ length: sample }, (_, i) => `
             <label class="fill-cell"><span>#${i + 1}</span>
               <input class="nm-input" type="number" min="0" max="150" step="0.1" data-fill="${i}"
                 value="${fills[i] !== undefined ? fills[i] : ''}" placeholder="%" /></label>`).join('')}</div>`;
         wrap.querySelectorAll('[data-fill]').forEach((el) => el.addEventListener('input', () => {
           fills[Number(el.dataset.fill)] = el.value === '' ? undefined : Number(el.value);
+          const n = fills.slice(0, sample).filter((v) => Number.isFinite(v)).length;
+          const prog = wrap.querySelector('#fill-progress');
+          if (prog) { prog.textContent = `${n} of ${sample} entered`; prog.className = `fill-progress ${n === sample ? 't-ok' : 't-warn'}`; }
           updateFill();
         }));
       }
+      /** How many of the required sample readings are still missing. */
+      const fillsMissing = () => {
+        const sample = D.sampleSizeFor(Number(bagCountEl.value) || 1, s2);
+        return sample - fills.slice(0, sample).filter((n) => Number.isFinite(n)).length;
+      };
 
       function updateWeigh() {
         const g = Number(grossEl.value), t = Number(tareEl.value), count = Number(bagCountEl.value);
@@ -574,7 +686,11 @@
           if (!w.ok) return w.msg;
           if (!d.bagCount || d.bagCount < 1) return 'Enter the number of bags counted';
         }
-        if (i === 2 && d.outcome === 'OVERRIDE_FULL_PRICE' && !d.fillNote) return 'Write the reason for paying the full price';
+        if (i === 2) {
+          const missing = fillsMissing();
+          if (missing > 0) return `Enter the fill height for every sample bag: ${missing} still missing`;
+          if (d.outcome === 'OVERRIDE_FULL_PRICE' && !d.fillNote) return 'Write the reason for paying the full price';
+        }
         return '';
       };
       const showStep = (i, quiet) => {
@@ -615,6 +731,7 @@
         if (!data.bagCount || data.bagCount < 1) errors.push({ field: 'Bags', msg: 'Enter the number of bags counted' });
         if (data.bagCount > Store.settings().maxBagsPerDelivery) errors.push({ field: 'Bags', msg: `More than ${Store.settings().maxBagsPerDelivery} bags — split the delivery` });
         if (data.outcome === 'OVERRIDE_FULL_PRICE' && !data.fillNote) errors.push({ field: 'Reason', msg: 'A written reason is required to override the price' });
+        if (data.bagCount >= 1 && fillsMissing() > 0) errors.push({ field: 'Fill check', msg: `Enter the fill height for every sample bag: ${fillsMissing()} still missing` });
         UI.showErrors(form, errors);
         if (errors.length) {
           const first = [0, 1, 2].find((k) => checkStep(k));
@@ -623,7 +740,7 @@
           return;
         }
 
-        const validFills = fills.filter((n) => Number.isFinite(n));
+        const validFills = fills.slice(0, D.sampleSizeFor(data.bagCount, Store.settings())).filter((n) => Number.isFinite(n));
         const fillCheck = D.evaluateFillCheck({
           bagCount: data.bagCount, fills: validFills, settings: Store.settings(),
           outcome: data.outcome === 'AUTO' ? null : data.outcome,
@@ -638,7 +755,7 @@
           driverNic: data.driverNic || '', weighbridgeSlip: data.weighbridgeSlip || '',
           grossKg: Number(data.grossKg), tareKg: Number(data.tareKg), netKg: w.netKg,
           bagCount: data.bagCount, avgBagKg: D.avgBagWeight(w.netKg, data.bagCount),
-          fillCheck, serials, allocations: [], farmerSplit: [],
+          fillCheck, serials, allocations: [],
           status: 'AWAITING_ACCEPTANCE',
           deliveredAt: new Date().toISOString(),
           receivedBy: Auth.current().email,
@@ -647,8 +764,35 @@
 
         VH.audit('delivery.create', 'delivery', delivery.id, `${receiptNo} · ${data.bagCount} bags · ${supplierName(delivery.supplierId)}`);
         UI.toast(`Delivery ${receiptNo} registered`, 'ok');
-        App.navigate('deliveries');
-        setTimeout(() => App.openDelivery(delivery.id), 120);
+        // Whoever may accept goes straight on to choosing the bays; anyone
+        // else sees the delivery waiting for the supervisor.
+        const canAccept = Auth.can('delivery.accept');
+        App.navigate('deliveries', () => setTimeout(() => (canAccept ? App.acceptFlow(delivery.id) : App.openDelivery(delivery.id)), 120));
+      });
+
+      /* supplier search + add */
+      const supSel = form.querySelector('[name=supplierId]');
+      const supFind = form.querySelector('#sup-find');
+      const fillSuppliers = (keep) => {
+        const q = supFind.value.trim().toLowerCase();
+        const all = Store.where('suppliers', (x) => !x.deleted && x.status !== 'INACTIVE').slice().sort((a, b) => a.name.localeCompare(b.name));
+        const list = q ? all.filter((x) => `${x.code} ${x.name} ${x.phone || ''} ${x.address || ''} ${x.nic || ''}`.toLowerCase().includes(q)) : all;
+        const cur = keep || supSel.value;
+        supSel.innerHTML = `<option value="">${list.length ? 'Select supplier…' : 'No supplier matches'}</option>`
+          + list.map((x) => `<option value="${esc(x.id)}">${esc(`${x.code} · ${x.name}${x.address ? ` (${x.address})` : ''}`)}</option>`).join('');
+        if (list.some((x) => x.id === cur)) supSel.value = cur;
+        else if (q && list.length === 1) supSel.value = list[0].id;       // one match: take it
+        form.querySelector('#sup-count').textContent = q ? `${list.length} of ${all.length} suppliers match` : `${all.length} suppliers`;
+      };
+      supFind.addEventListener('input', () => fillSuppliers());
+      supFind.addEventListener('keydown', (e) => { if (e.key === 'Enter') e.preventDefault(); });
+      fillSuppliers();
+      const supNew = form.querySelector('#sup-new');
+      if (supNew) supNew.addEventListener('click', () => App.editSupplier(null, (rec) => { supFind.value = ''; fillSuppliers(rec.id); }));
+
+      form.querySelector('#print-fill-sheet').addEventListener('click', () => {
+        const d = UI.formData(form);
+        App.printFillSheet({ bagCount: d.bagCount, supplierId: d.supplierId, vehicleNo: d.vehicleNo, biomassType: d.biomassType });
       });
     },
   });
@@ -724,8 +868,6 @@
     const sup = Store.byId('suppliers', d.supplierId) || {};
     const p = VH.paymentFor(d.id);
     const allocRows = (d.allocations || []).map((a) => `<tr><td>${esc(a.bayCode)}</td><td class="num">${a.bags}</td></tr>`).join('');
-    const splitRows = (d.farmerSplit || []).map((f) => `<tr><td>${esc(f.code)}</td><td>${esc(f.name)}</td><td class="num">${f.bags}</td></tr>`).join('');
-    const splitTotal = (d.farmerSplit || []).reduce((a, f) => a + Number(f.bags || 0), 0);
 
     UI.modal({
       title: `Delivery ${d.receiptNo}`,
@@ -757,9 +899,8 @@
           <div class="nm-inset pad-sm">
             <h4>Allocation</h4>
             ${allocRows ? `<table class="mini"><thead><tr><th>Bay</th><th class="num">Bags</th></tr></thead><tbody>${allocRows}</tbody></table>` : '<p class="muted">No bay allocated yet.</p>'}
-            <h4 style="margin-top:8px">Farmer split</h4>
-            ${splitRows ? `<table class="mini"><thead><tr><th>Code</th><th>Farmer</th><th class="num">Bags</th></tr></thead><tbody>${splitRows}</tbody></table>
-              <p class="small ${splitTotal === d.bagCount ? 't-ok' : 't-warn'}">${splitTotal} of ${d.bagCount} bags declared${splitTotal === d.bagCount ? ' ✓' : ' — complete before release'}</p>` : '<p class="muted">Not declared yet (required before payment release).</p>'}
+            <h4 style="margin-top:8px">Pay to</h4>
+            ${VH.bankHtml(sup)}
           </div>
         </div>
         ${d.serials && d.serials.length ? `<p class="small muted">${d.serials.length} bag serial(s) captured, ${esc(d.serials[0])} → ${esc(d.serials[d.serials.length - 1])}</p>` : ''}
@@ -773,7 +914,7 @@
         <button class="nm-btn" data-act="print"><i class="i i-printer"></i>Print receipt</button>
         <button class="nm-btn" data-act="labels"><i class="i i-tag"></i>Print bag labels</button>
         ${['AWAITING_ACCEPTANCE', 'REJECTED'].includes(d.status) && Auth.can('delivery.accept') ? '<button class="nm-btn primary" data-act="accept">Accept and allocate bay</button>' : ''}
-        ${d.status === 'ACCEPTED' && Auth.can('payment.split') ? '<button class="nm-btn" data-act="split">Declare farmer split</button>' : ''}
+        ${d.status === 'ACCEPTED' ? '<button class="nm-btn" data-act="invoice"><i class="i i-printer"></i>Invoice</button>' : ''}
       `,
       onMount(el, close) {
         el.addEventListener('click', (e) => {
@@ -783,7 +924,7 @@
           if (act === 'print') return App.printReceipt(d.id);
           if (act === 'labels') return App.printLabels(d.id);
           if (act === 'accept') { close(); return App.acceptFlow(d.id); }
-          if (act === 'split') { close(); return App.farmerSplitFlow(d.id); }
+          if (act === 'invoice') return App.printInvoice(d.id);
         });
       },
     });
@@ -799,34 +940,49 @@
     const unitPrice = d.fillCheck ? d.fillCheck.unitPrice : s.unitPrice;
     const moisture = d.avgBagKg ? D.moistureFromWeight(d.avgBagKg, s) : null;
     const suggest = D.suggestedDeduction(moisture, s);
+    const sup0 = Store.byId('suppliers', d.supplierId) || {};
+    // The usual reason for taking something off is under-filled bags, so that
+    // is what the reason box always starts with. A damp or wet reading is
+    // shown under the percentage; the supervisor changes the reason if needed.
+    const defaultReason = s.defaultDeductionReason || 'Bags are not filled fully';
+
+    // Start with a sensible split: empty bays first, then wherever there is room.
+    const holds = new Map(bays.map((b) => [b.id, VH.bagsInBay(b.id)]));
+    const room = (b) => Math.max(0, (Number(b.capacityBags) || 0) - holds.get(b.id));
+    const plan = new Map();
+    let left = d.bagCount;
+    for (const b of bays.filter((x) => holds.get(x.id) === 0).concat(bays.filter((x) => holds.get(x.id) > 0))) {
+      if (left <= 0) break;
+      const take = Math.min(left, room(b));
+      if (take > 0) { plan.set(b.id, take); left -= take; }
+    }
+    if (left > 0 && bays.length) plan.set(bays[0].id, (plan.get(bays[0].id) || 0) + left);   // nowhere has room: the supervisor decides
 
     UI.modal({
       title: `Accept ${d.receiptNo}`,
       size: 'lg',
       body: `
         <div class="form-errors" role="alert" id="accept-errors"></div>
-        <p class="muted">Allocate ${d.bagCount} bags across the bays. The bags per bay must add up exactly.</p>
-        <div class="nm-inset pad-sm">
-          <table class="mini" id="alloc-table">
-            <thead><tr><th>Bay</th><th>Bags in bay</th><th>Currently holds</th><th></th></tr></thead>
-            <tbody>
-              ${bays.map((b, i) => `<tr>
-                <td>${esc(b.code)}</td>
-                <td><input class="nm-input tiny-input" type="number" min="0" step="1" data-bay="${b.id}" value="${i === 0 ? d.bagCount : 0}" /></td>
-                <td class="muted">${VH.bagsInBay(b.id).toLocaleString()} bags</td>
-                <td class="muted small">cap. ${(b.capacityBags || 0).toLocaleString()}</td>
-              </tr>`).join('')}
-            </tbody>
-            <tfoot><tr><th>Total</th><th id="alloc-total">${d.bagCount}</th><th colspan="2" id="alloc-hint" class="muted"></th></tr></tfoot>
-          </table>
+        <p class="muted">Choose the bays for these <b>${d.bagCount}</b> bags. A split has been suggested, empty bays first; change any number. The bags per bay must add up exactly.</p>
+        ${bays.length ? '' : '<div class="banner banner-warn">There are no bays yet. Add them under Bays &amp; stock first.</div>'}
+        <div class="alloc-grid" id="alloc-table">
+          ${bays.map((b) => `<label class="alloc-cell ${plan.get(b.id) ? 'on' : ''}">
+              <span class="alloc-code">${esc(b.code)}</span>
+              <input class="nm-input" type="number" min="0" step="1" data-bay="${b.id}" value="${plan.get(b.id) || 0}" aria-label="Bags into ${esc(b.code)}" />
+              <span class="alloc-room">${holds.get(b.id)} in, room for ${room(b)}</span>
+            </label>`).join('')}
         </div>
+        <p class="alloc-total">Total <b id="alloc-total">${d.bagCount}</b> of ${d.bagCount} <span id="alloc-hint" class="muted"></span></p>
+        <h4>Pay to</h4>
+        ${VH.bankHtml(sup0)}
         <h4>Deduction</h4>
         <p class="muted small">Every load is received. If this one is wet or below standard, take a percentage off its value here instead of sending it back.</p>
         ${d.avgBagKg ? VH.moistureScale(d.avgBagKg, { compact: true }) : ''}
         <div class="grid-2" style="margin-top:12px">
           ${UI.field('Deduct from this batch (%)', UI.input('deductionPct', { type: 'number', min: 0, max: 100, step: '0.5', value: suggest.pct }),
             suggest.pct ? `Suggested ${suggest.pct}% because the load reads ${esc(D.MOISTURE_LABEL[suggest.band])}. Change it, or set 0 for no deduction.` : 'No deduction suggested: the load reads dry enough.')}
-          ${UI.field('Reason for the deduction', UI.input('deductionReason', { value: suggest.reason, placeholder: 'Wet load, foreign material…' }))}
+          ${UI.field('Reason for the deduction', UI.input('deductionReason', { value: defaultReason, placeholder: 'Bags are not filled fully' }),
+            suggest.reason ? `Only used when the percentage is above 0. Write "${esc(suggest.reason)}" instead if the deduction is for moisture.` : 'Only used when the percentage is above 0.')}
         </div>
         <div class="calc-strip" id="deduct-out"></div>
         <div class="grid-2" style="margin-top:12px">
@@ -843,7 +999,15 @@
           const total = UI.$$('[data-bay]', el).reduce((a, i) => a + (Number(i.value) || 0), 0);
           totalEl.textContent = total;
           const diff = total - d.bagCount;
-          hintEl.textContent = diff === 0 ? 'balanced ✓' : `${diff > 0 ? '+' : ''}${diff} bags`;
+          const over = UI.$$('[data-bay]', el).filter((i) => {
+            const b = bays.find((x) => x.id === i.dataset.bay);
+            i.closest('.alloc-cell').classList.toggle('on', Number(i.value) > 0);
+            const tooMany = b && (Number(i.value) || 0) > room(b);
+            i.closest('.alloc-cell').classList.toggle('over', !!tooMany);
+            return tooMany;
+          }).length;
+          hintEl.textContent = (diff === 0 ? 'adds up' : `${diff > 0 ? `${diff} too many` : `${-diff} still to place`}`)
+            + (over ? `. ${over} bay(s) will be over their size, which is allowed` : '');
           hintEl.className = diff === 0 ? 't-ok' : 't-warn';
         };
         UI.$$('[data-bay]', el).forEach((i) => i.addEventListener('input', recalc));
@@ -871,13 +1035,8 @@
           const errors = [];
           if (!allocs.length) errors.push({ field: 'Bays', msg: 'Allocate at least one bay' });
           if (total !== d.bagCount) errors.push({ field: 'Allocation', msg: `Bags per bay add up to ${total} but ${d.bagCount} were counted` });
-          for (const a of allocs) {
-            const existing = VH.bagsInBay(a.bayId);
-            const bay = Store.byId('bays', a.bayId);
-            if (bay && bay.capacityBags && existing + a.bags > bay.capacityBags) {
-              errors.push({ field: bay.code, msg: `Only ${bay.capacityBags - existing} bags of space left` });
-            }
-          }
+          // A bay's size is a guide, not a wall: going over it is allowed and
+          // shows on the bay as "over size".
           const m = money$();
           const rawPct = Number(pctEl.value);
           const deductionReason = el.querySelector('[name=deductionReason]').value.trim();
@@ -907,7 +1066,7 @@
             let bay = null;
             for (const a of allocs) { if (perBay[a.bayId] > 0) { bay = a; perBay[a.bayId] -= 1; break; } }
             Object.assign(bag, {
-              status: 'STORED', supplierId: d.supplierId, deliveryId: d.id, farmerId: null, usageId: null,
+              status: 'STORED', supplierId: d.supplierId, deliveryId: d.id, usageId: null,
               bayId: bay ? bay.bayId : (allocs[0] || {}).bayId,
               bayCode: bay ? bay.bayCode : (allocs[0] || {}).bayCode,
               deliveredAt: now, updatedAt: now,
@@ -926,15 +1085,11 @@
             bags: d.bagCount, unitPrice,
             grossAmount: m.grossAmount, deductionPct: m.deductionPct, deductionReason: m.deductionPct ? deductionReason : '',
             deductions: m.deductions, netAmount: m.netAmount,
-            status: 'DRAFT', createdAt: now,
+            // goes straight to the supervisor: there is no farmer declaration step any more
+            status: 'PENDING_SUPERVISOR', createdAt: now,
             history: [{ at: now, by: Auth.current().email, action: 'CREATED',
               note: `Generated on acceptance of ${d.receiptNo}${m.deductionPct ? ` · ${m.deductionPct}% deducted: ${deductionReason}` : ''}` }],
           }, 'payment-create');
-
-          const splitTotal = (d.farmerSplit || []).reduce((a, f) => a + Number(f.bags || 0), 0);
-          if (splitTotal === d.bagCount) {
-            Store.update('payments', payment.id, { status: 'PENDING_SUPERVISOR' }, 'payment-submit');
-          }
 
           Store.update('deliveries', d.id, {
             status: 'ACCEPTED', acceptedAt: new Date().toISOString(), acceptedBy: Auth.current().email,
@@ -957,68 +1112,82 @@
     });
   };
 
-  /* --------------------------- farmer split -------------------------- */
-  App.farmerSplitFlow = function (id) {
+  /* ------------------------ fill-check sheet ------------------------- */
+  /**
+   * A blank sheet for the drum: one box per sample bag, filled in by hand
+   * at the gate and typed into the app afterwards. With no bag count yet it
+   * prints a general sheet with 30 boxes.
+   */
+  App.printFillSheet = function (opts) {
+    const o = opts || {};
+    const s = Store.settings();
+    const count = Number(o.bagCount) || 0;
+    const sample = count ? D.sampleSizeFor(count, s) : 30;
+    const sup = o.supplierId ? (Store.byId('suppliers', o.supplierId) || {}) : {};
+    const blank = '<span class="blank"></span>';
+    const boxes = Array.from({ length: sample }, (_, i) => `<div class="fill-box"><span>Bag ${i + 1}</span><b></b><i>%</i></div>`).join('');
+    const html = `${VH.printHeader('Fill check sheet', `Printed for the gate · ${dOnly(new Date().toISOString())}`)}
+      <table>
+        <tr><th>Supplier</th><td>${sup.name ? esc(`${sup.code} · ${sup.name}`) : blank}</td><th>Vehicle</th><td>${o.vehicleNo ? esc(String(o.vehicleNo).toUpperCase()) : blank}</td></tr>
+        <tr><th>Biomass</th><td>${o.biomassType ? esc(VH.typeLabel(o.biomassType)) : blank}</td><th>Date and time</th><td>${blank}</td></tr>
+        <tr><th>Bags counted</th><td>${count || blank}</td><th>Sample (${esc(s.sampleSizePct)}% of the bags)</th><td>${count ? `${sample} bags` : blank}</td></tr>
+      </table>
+      <p class="meta">Empty each sample bag into the measuring drum and write the fill height as a percentage of the drum. Every box must be filled: the app needs all of the ${esc(s.sampleSizePct)}% sample. Agreement: ${esc(s.fillThresholdPct)}% average for the full price of Rs ${esc(s.unitPrice)}; below that, Rs ${esc(s.reducedUnitPrice)} per bag.</p>
+      <div class="fill-sheet">${boxes}</div>
+      <table style="margin-top:6mm">
+        <tr><th>Total of all readings</th><td>${blank}</td><th>Average (total ÷ ${count ? sample : 'number of bags'})</th><td>${blank}</td></tr>
+        <tr><th>Remarks</th><td colspan="3" style="height:16mm"></td></tr>
+      </table>
+      <div style="display:flex;gap:20mm;margin-top:10mm">
+        <div class="sign">Measured by</div><div class="sign">Supplier or driver</div><div class="sign">Biomass supervisor</div>
+      </div>`;
+    UI.print(html, 'Fill check sheet');
+  };
+
+  /* ------------------------------ invoice ---------------------------- */
+  /** One page for Head Office: what was bought, what is payable, and where to pay it. */
+  App.printInvoice = function (id) {
     const d = Store.byId('deliveries', id);
     if (!d) return;
+    if (d.status !== 'ACCEPTED') return UI.toast('The invoice is available once the load has been accepted', 'warn');
     const sup = Store.byId('suppliers', d.supplierId) || {};
-    const farmers = Store.where('farmers', (f) => !f.deleted && (f.supplierId === d.supplierId || (sup.isFarmer && sup.farmerId && f.id === sup.farmerId)));
-    const current = {};
-    for (const f of d.farmerSplit || []) current[f.farmerId] = f.bags;
-
-    UI.modal({
-      title: `Farmer declaration · ${d.receiptNo}`,
-      size: 'lg',
-      body: `<p class="muted">The supplier declares how many bags came from each farmer before the payment can move. The total must equal <b>${d.bagCount}</b> bags.</p>
-        ${sup.isFarmer ? `<p class="small">${esc(sup.name)} is registered as a farmer as well, so he can appear in this list.</p>` : ''}
-        <div class="form-errors" role="alert" id="split-errors"></div>
-        <div class="nm-inset pad-sm">
-          <table class="mini"><thead><tr><th>Code</th><th>Farmer</th><th>Village</th><th class="num">Bags</th></tr></thead>
-          <tbody>${farmers.map((f) => `<tr>
-            <td>${esc(f.code)}</td><td>${esc(f.name)}</td><td class="muted">${esc(f.village || '')}</td>
-            <td class="num"><input class="nm-input tiny-input" type="number" min="0" step="1" data-farmer="${f.id}" value="${current[f.id] || 0}" /></td>
-          </tr>`).join('') || '<tr><td colspan="4" class="muted">No farmers registered under this supplier.</td></tr>'}</tbody>
-          <tfoot><tr><th colspan="3">Total</th><th class="num" id="split-total">0</th></tr></tfoot></table>
-        </div>`,
-      footer: '<button class="nm-btn" data-close>Cancel</button><button class="nm-btn primary" data-act="save">Save declaration</button>',
-      onMount(el, close) {
-        const recalc = () => {
-          const total = UI.$$('[data-farmer]', el).reduce((a, i) => a + (Number(i.value) || 0), 0);
-          const t = el.querySelector('#split-total');
-          t.textContent = total;
-          t.className = total === d.bagCount ? 'num t-ok' : 'num t-warn';
-        };
-        UI.$$('[data-farmer]', el).forEach((i) => i.addEventListener('input', recalc));
-        recalc();
-        el.querySelector('[data-act=save]').addEventListener('click', () => {
-          const splits = UI.$$('[data-farmer]', el).map((i) => {
-            const f = Store.byId('farmers', i.dataset.farmer);
-            return { farmerId: i.dataset.farmer, code: f.code, name: f.name, bags: Number(i.value) || 0 };
-          }).filter((s) => s.bags > 0);
-          const total = splits.reduce((a, s) => a + s.bags, 0);
-          if (total !== d.bagCount) {
-            UI.showErrors(el, [`Declared ${total} bags but ${d.bagCount} were delivered.`]);
-            return;
-          }
-          Store.update('deliveries', d.id, { farmerSplit: splits }, 'farmer-split');
-          // allocate farmer ownership onto the bag records where we know the serials
-          const bags = Store.where('bags', (b) => b.deliveryId === d.id);
-          let idx = 0;
-          for (const s of splits) {
-            for (let i = 0; i < s.bags && idx < bags.length; i++, idx++) {
-              bags[idx].farmerId = s.farmerId;
-              bags[idx].updatedAt = new Date().toISOString();
-              Store.markDirty('bags', bags[idx].id);
-            }
-          }
-          const p = VH.paymentFor(d.id);
-          if (p && p.status === 'DRAFT') Store.update('payments', p.id, { status: 'PENDING_SUPERVISOR' }, 'payment-submit');
-          VH.audit('payment.split', 'delivery', d.id, `Farmer split declared · ${splits.map((s) => `${s.code}:${s.bags}`).join(', ')}`);
-          UI.toast('Farmer declaration saved' + (p && p.status === 'DRAFT' ? ' — payment sent for authorisation' : ''), 'ok');
-          close(); App.refresh();
-        });
-      },
-    });
+    const p = VH.paymentFor(d.id) || {};
+    const unit = (d.fillCheck && d.fillCheck.unitPrice) || p.unitPrice || Store.settings().unitPrice;
+    const gross = D.round2((d.bagCount || 0) * unit);
+    const deducted = Number(d.deductionAmount) || 0;
+    const payable = VH.payable(d);
+    const invNo = `INV-${String(d.receiptNo || '').replace(/^RC-/, '')}`;
+    const full = d.fillCheck && d.fillCheck.fullPrice;
+    const html = `${VH.printHeader('Purchase invoice', `${invNo} · ${dOnly(d.acceptedAt || d.deliveredAt)}`)}
+      <div class="row" style="margin-bottom:4mm">
+        <div><h2 style="margin-top:0">Supplier</h2>
+          <p><b>${esc(sup.name || '')}</b><br/>${esc(sup.code || '')}${sup.nic ? ` · NIC ${esc(sup.nic)}` : ''}<br/>${esc(sup.address || '')}${sup.phone ? `<br/>${esc(sup.phone)}` : ''}</p></div>
+        <div><h2 style="margin-top:0">Bought by</h2>
+          <p><b>EnerFab (Pvt) Ltd</b><br/>${esc(Store.settings().siteName)}<br/>${esc(Store.settings().siteLocation)}</p></div>
+        <div><h2 style="margin-top:0">Reference</h2>
+          <p>Invoice <b>${esc(invNo)}</b><br/>Receipt ${esc(d.receiptNo || '')}<br/>${p.paymentNo ? `Payment ${esc(p.paymentNo)}<br/>` : ''}Weighbridge slip ${esc(d.weighbridgeSlip || '—')}</p></div>
+      </div>
+      <table>
+        <thead><tr><th>Description</th><th class="num">Quantity</th><th class="num">Rate</th><th class="num">Amount</th></tr></thead>
+        <tbody>
+          <tr><td>${esc(VH.typeLabel(d.biomassType))} biomass, ${kg(d.netKg)} net, vehicle ${esc(d.vehicleNo || '')}${d.fillCheck && d.fillCheck.avgFillPct !== null ? `<br/><span class="meta">Fill check ${d.fillCheck.avgFillPct}% average${full && unit < full ? `: reduced rate applied (full rate ${money(full)})` : ''}</span>` : ''}</td>
+            <td class="num">${(d.bagCount || 0).toLocaleString()} bags</td><td class="num">${money(unit)}</td><td class="num">${money(gross)}</td></tr>
+          ${deducted ? `<tr><td>Deduction ${esc(d.deductionPct)}%${d.deductionReason ? `: ${esc(d.deductionReason)}` : ''}</td><td class="num"></td><td class="num"></td><td class="num">− ${money(deducted)}</td></tr>` : ''}
+          <tr><th colspan="3">Amount payable</th><th class="num">${money(payable)}</th></tr>
+        </tbody>
+      </table>
+      <h2>Pay to</h2>
+      <table>
+        <tr><th>Account name</th><td>${esc(sup.bankAccountName || sup.name || '')}</td><th>Account number</th><td>${esc(sup.bankAccount || '')}</td></tr>
+        <tr><th>Bank</th><td>${esc(sup.bankName || sup.bank || '')}</td><th>Branch</th><td>${esc(sup.bankBranch || '')}</td></tr>
+      </table>
+      ${VH.bankText(sup) === 'No bank details on file' ? '<p class="meta"><b>No bank details are on file for this supplier.</b> Add them under Suppliers before this is sent for payment.</p>' : ''}
+      <p class="meta">Stored in: ${(d.allocations || []).map((a) => `${esc(a.bayCode)} (${a.bags})`).join(', ') || '—'}. Accepted by ${esc(d.acceptedBy || '')}${p.status ? `. Payment status: ${esc(D.PAYMENT_LABEL[p.status] || p.status)}` : ''}.</p>
+      <div style="display:flex;gap:16mm;margin-top:12mm">
+        <div class="sign">Supplier</div><div class="sign">Biomass supervisor</div><div class="sign">Head Office accounts</div>
+      </div>`;
+    UI.print(html, `Invoice ${invNo}`);
+    VH.audit('invoice.print', 'delivery', d.id, `${invNo} printed for ${sup.name || ''} · ${money(payable)}`);
   };
 
   /* ------------------------------ printing --------------------------- */
@@ -1041,6 +1210,7 @@
         ${d.deductionPct ? `<tr><th>Deduction</th><td>${d.deductionPct}% · ${money(d.deductionAmount)}</td><th>Reason</th><td>${esc(d.deductionReason || '')}</td></tr>` : ''}
         <tr><th>Payable</th><td colspan="3"><b>${d.status === 'ACCEPTED' ? money(VH.payable(d)) : 'Set when the supervisor accepts the load'}</b></td></tr>
         ${(d.allocations || []).length ? `<tr><th>Bays</th><td colspan="3">${d.allocations.map((a) => `${esc(a.bayCode)}: ${a.bags} bags`).join(' · ')}</td></tr>` : ''}
+        <tr><th>Pay to</th><td colspan="3">${esc(VH.bankText(sup))}</td></tr>
       </table>
       <h2>Bag serials</h2>
       <p class="meta">${(d.serials || []).length ? `${d.serials.length} serials: ${esc(d.serials[0])} … ${esc(d.serials[d.serials.length - 1])}` : 'Serials to be captured at acceptance.'}</p>
@@ -1052,7 +1222,7 @@
     VH.audit('delivery.print', 'delivery', d.id, `${d.receiptNo} receipt printed`);
   };
 
-  /** Sticker sheet — req 12/13 plus the WhatsApp tag decision. */
+  /** Sticker sheet: one label per bag, with the serial as a barcode. */
   App.printLabels = function (id) {
     const d = Store.byId('deliveries', id);
     if (!d) return;
@@ -1064,12 +1234,12 @@
     }
     const sheet = serials.slice(0, 96).map((sn) => `
       <div class="sticker">
-        <div class="co">EnerFab Biomass</div>
+        <div class="co"><img class="sticker-logo" src="assets/enerfab-logo.png" alt="" />EnerFab Biomass</div>
         <div class="serial">${esc(String(sn).replace('(new ', '').replace(')', ''))}</div>
         ${D.code39SVG(String(sn).replace(/[^A-Z0-9-]/gi, ''), { height: 34, narrow: 1.6, quiet: 6 })}
         <div class="sub">Supplier: <b>${esc(sup.code || '')}</b></div>
         <div class="sub">Receipt: <b>${esc(d.receiptNo)}</b></div>
-        <div class="write">Farmer reg. no: ______________________<br/>Supplier no: _______________________</div>
+        <div class="write">Supplier no: _______________________</div>
       </div>`).join('');
     UI.print(`<div class="sheet">${sheet}</div>`, `Bag labels ${d.receiptNo}`);
     VH.audit('delivery.labels', 'delivery', d.id, `${serials.length} bag labels printed`);
@@ -1104,7 +1274,7 @@
             </div>
             <div class="trace-grid">
               <div><span class="muted small">Supplier</span><b>${r.supplier ? esc(`${r.supplier.code} · ${r.supplier.name}`) : '—'}</b></div>
-              <div><span class="muted small">Farmer</span><b>${r.farmer ? esc(`${r.farmer.code} · ${r.farmer.name}`) : 'not declared'}</b></div>
+
               <div><span class="muted small">Issue round</span><b>${r.issue ? `Round ${r.issue.roundNo} · ${esc(dOnly(r.issue.issuedAt))}` : '—'}</b></div>
               <div><span class="muted small">Receipt</span><b>${r.delivery ? esc(r.delivery.receiptNo) : '—'}</b></div>
               <div><span class="muted small">Bay</span><b>${bag.bayCode ? esc(bag.bayCode) : '—'}</b></div>

@@ -63,7 +63,8 @@
     'capacityBags', 'count', 'roundNo', 'sampleSizePct', 'minSampleSize', 'standardDryBagKg',
     'fillThresholdPct', 'replacementOrderQty', 'landAcres', 'fillPct', 'kg', 'weightKg', 'qty',
     'quantity', 'bagsIssued', 'bagsReturned', 'damaged', 'tries', 'n',
-    'deductionPct', 'deductionAmount', 'payableAmount', 'moistureCalKg1', 'moistureCalPct1',
+    'deductionPct', 'deductionAmount', 'payableAmount', 'dryingKgPerDay', 'driestBagKg', 'moistureReadyPct',
+    'bayCapacityBags', 'lastWeighKg', 'rev', 'moistureCalKg1', 'moistureCalPct1',
     'moistureCalKg2', 'moistureCalPct2', 'moistureWarnPct', 'moistureHighPct', 'deductDampPct', 'deductWetPct',
   ]);
   const HTML_CHARS = /[<>"`]/g;
@@ -139,7 +140,7 @@
       },
       settings: Object.assign({}, CFG.defaults, {
         siteName: 'EnerFab Biomass Storage',
-        siteLocation: 'Nawagaththegama',
+        siteLocation: 'Balangoda',
         headOfficeEmail: 'accounts@efpl.org',
         biomassTypes: CFG.biomassTypes,
         updatedAt: null,
@@ -200,8 +201,27 @@
       if (!this.data.meta || typeof this.data.meta !== 'object') this.data.meta = blankDoc().meta;
       this.bumpCounters();
       this.data.settings = Object.assign(blankDoc().settings, this.data.settings || {});
+      this.migrateSettings();
       this.data.config = deepMerge(blankDoc().config, this.data.config || {});
       return this.data;
+    },
+
+    /**
+     * One-off corrections to saved settings when the app changes its mind
+     * about a default. Done quietly: it must never count as "an administrator
+     * saved the settings", or a tidy-up on one tablet would overwrite the
+     * prices in the cloud. Also run on settings that arrive from the cloud.
+     */
+    migrateSettings() {
+      const s = this.data.settings;
+      if (!s || (s.rev || 0) >= 3) return false;
+      if (!s.siteLocation || /gaththegama/i.test(s.siteLocation)) s.siteLocation = 'Balangoda';   // the site is in Balangoda
+      s.minSampleSize = 1;                    // the fill check measures the full 5 %, with no extra minimum
+      for (const k of ['dryingKgPerDay', 'driestBagKg', 'moistureReadyPct', 'bayCapacityBags', 'defaultDeductionReason']) {
+        if (s[k] === undefined || s[k] === null || s[k] === '') s[k] = CFG.defaults[k];
+      }
+      s.rev = 3;
+      return true;
     },
 
     /* ------------------------------------------------------------------ */

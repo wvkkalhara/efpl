@@ -30,20 +30,20 @@ No framework and no runtime dependencies — the app is plain HTML, CSS and Java
 
 | # | Requirement | Where |
 |---|---|---|
-| 1 | Supplier and farmer registers, farmers under suppliers | Suppliers · Farmers |
+| 1 | Supplier register with bank details and search | Suppliers · Receive biomass |
 | 2 | Weighing, bag count, random bag check | Receive biomass |
-| 3 | Fill-check sample → Rs 300 / Rs 270 / recount | Receive biomass step 3 |
+| 3 | Fill-check sample (the full 5 %, printable blank sheet) → Rs 300 / Rs 270 / recount | Receive biomass step 3 |
 | – | Nothing is rejected: wet or poor loads are received and a % is deducted | Accept & allocate · Payments |
 | – | Moisture from bag weight: % = (40 ÷ 18) × kg − 20 (18 kg = 20 %, 36 kg = 60 %) | Everywhere a bag is weighed · Settings |
-| 4 | Accept, allocate bays, bags per bay | Accept & allocate |
+| 4 | Accept, allocate bays (30 × 200 to start, each resizable), bags per bay, drying 0.6 kg/bag/day, dry bays shown red, bay history with moisture | Accept & allocate · Bays & stock |
 | 5 | Supervisor approves the bay from bag weight/moisture | Gasifier issue |
 | 6 | Weigh 3 bags at consumption → average → out weight | Weigh & consume |
 | 7 | Incoming vs outgoing bags and kg | Dashboard · Reports |
 | 8 | Multiple biomass types (Gliricidia, Ipil Ipil, cinnamon, off-cuts, shell) | Settings · seeded |
 | 9 | Payment on acceptance → supervisor → Head Office | Payments |
-| 10 | Farmer list required before release | Declare farmer split |
-| 11 | Problem traced back to supplier **and** farmer | Trace a bag · Quality |
-| 12 | Receipt number + printed sticker | Print receipt · Print labels |
+| 10 | ~~Farmer list required before release~~ — removed on request (Nov 2026) | — |
+| 11 | Problem traced back to the supplier | Trace a bag · Quality |
+| 12 | Receipt number + printed sticker + invoice, logo and bank details on every print | Print receipt · Invoice · Print labels |
 | 13 | Supplier writes supplier no. + farmer no. on the tag | Label write-in boxes |
 | 14 | Bag returns, repair, replacement order | Bag returns |
 | 15 | Reports | Reports (CSV + print) |
@@ -167,4 +167,4 @@ Firebase endpoints — and nothing else.
 
 ## Suggested next phase
 
-Cloud Functions for server-side pricing and payment transitions · device PIN on resume · moisture-meter field · bag cost and asset value · supplier portal (read-only statement) · Sinhala/Tamil interface · kg-to-energy reporting.
+Cloud Functions for server-side pricing and payment transitions · device PIN on resume · moisture-meter field · bag cost and asset value · supplier portal (read-only statement) · kg-to-energy reporting.

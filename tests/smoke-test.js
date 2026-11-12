@@ -31,7 +31,7 @@ vc.on('error', (...a) => console.error('page error:', ...a));
 
 const SCRIPTS = [
   'js/config.js', 'js/store.js', 'js/domain.js', 'js/firebase.js', 'js/auth.js',
-  'js/sync.js', 'js/ui.js', 'js/i18n.js', 'js/seed.js', 'js/app.js',
+  'js/sync.js', 'js/ui.js', 'js/seed.js', 'js/app.js',
   'js/views-core.js', 'js/views-stock.js', 'js/views-money.js',
 ];
 
@@ -60,10 +60,21 @@ function session(role = 'super_admin', email = 'w.v.k.kalhara@gmail.com') {
     rememberUntil: new Date(Date.now() + 864e5).toISOString(),
   }));
   window.Auth.restore();
+  settle();
+}
+
+/**
+ * Closing a dialog steps the browser history back, and page changes wait
+ * for that step to land. The suite runs without pausing, so deliver those
+ * steps here instead of leaving every later page change waiting.
+ */
+function settle() {
+  for (let i = 0; i < 20 && window.UI.isSettling(); i++) window.dispatchEvent(new window.PopStateEvent('popstate'));
 }
 
 /** jsdom keeps closed modals around for the 200 ms fade — clear them between steps. */
 function closeModals() {
+  settle();
   window.document.querySelectorAll('.modal-backdrop').forEach((m) => m.remove());
 }
 
@@ -138,8 +149,8 @@ function run() {
     const r = Domain.evaluateFillCheck({ bagCount: 10, fills: [84], settings: s, outcome: 'OVERRIDE_FULL_PRICE' });
     return r.unitPrice === 300;
   });
-  check('sample size follows the agreement (5%, min 3)', () => {
-    return Domain.sampleSizeFor(100, s) === 5 && Domain.sampleSizeFor(20, s) === 3;
+  check('sample size is the full 5%, rounded up, with no minimum of 3', () => {
+    return Domain.sampleSizeFor(100, s) === 5 && Domain.sampleSizeFor(20, s) === 1 && Domain.sampleSizeFor(50, s) === 3;
   });
 
   results.push('\nWEIGHING & MOISTURE (requirements 2, 5, 6)');
@@ -214,9 +225,9 @@ function run() {
   });
 
   results.push('\nTRACEABILITY (requirement 11)');
-  check('serial 000302 traces to supplier, farmer and receipt', () => {
+  check('serial 000302 traces to supplier and receipt', () => {
     const t = Domain.traceBag(Store, 'EFPL-BG-000302');
-    return t && t.supplier && t.farmer && t.delivery && t.delivery.receiptNo === 'RC-2026-0002';
+    return t && t.supplier && t.delivery && t.delivery.receiptNo === 'RC-2026-0002';
   });
   check('a consumed bag also shows the gasifier run', () => {
     const t = Domain.traceBag(Store, 'EFPL-BG-000045');
@@ -248,10 +259,7 @@ function run() {
     const p = Store.all('payments').find((x) => x.paymentNo === 'PAY-2026-0002');
     return p.netAmount === 48600 && p.unitPrice === 270;
   });
-  check('farmer split covers the delivery', () => {
-    const d = Store.all('deliveries').find((x) => x.receiptNo === 'RC-2026-0001');
-    return d.farmerSplit.reduce((a, f) => a + f.bags, 0) === d.bagCount;
-  });
+  check('the farmer screen is gone', () => !App.routes.farmers);
 
   results.push('\nRECEIVING A TRUCK (end to end)');
   const pending = Store.all('deliveries').find((d) => d.status === 'AWAITING_ACCEPTANCE');
@@ -260,6 +268,11 @@ function run() {
   App.acceptFlow(pending.id);
   check('acceptance dialog opens with bay allocations', () => !!window.document.querySelector('[data-bay]'));
   const inputs = window.document.querySelectorAll('[data-bay]');
+  check('the suggested split already adds up to the bag count', () => {
+    return [...inputs].reduce((a, i) => a + (Number(i.value) || 0), 0) === pending.bagCount;
+  });
+  // the supervisor overrides the suggestion and puts the whole load in the first bay
+  inputs.forEach((i) => { i.value = '0'; });
   inputs[0].value = String(pending.bagCount);
   inputs[0].dispatchEvent(new window.Event('input', { bubbles: true }));
   // give the truck serials that are in the registry but still in stock
@@ -270,8 +283,8 @@ function run() {
   const paymentsBefore = Store.all('payments').length;
   // the supervisor takes 5% off this load instead of sending it back
   const pctBox = window.document.querySelector('[name=deductionPct]');
-  check('a damp load opens with the suggested deduction and reason filled in', () => {
-    return pctBox.value === '5' && /Damp load/.test(window.document.querySelector('[name=deductionReason]').value);
+  check('a damp load opens with the suggested deduction and the default reason', () => {
+    return pctBox.value === '5' && window.document.querySelector('[name=deductionReason]').value === 'Bags are not filled fully';
   });
   window.document.querySelector('[name=deductionReason]').value = '';
   pctBox.value = '5';
@@ -402,7 +415,7 @@ function run() {
   const { Sync } = window;
   const later = (ms) => new Date(Date.now() + ms).toISOString();
   check('a newer cloud record replaces the local one and cancels the stale upload', () => {
-    const bag = Store.all('bags').find((b) => b.status === 'STORED' && b.farmerId);
+    const bag = Store.all('bags').find((b) => b.status === 'STORED' && b.bayId);
     Store.markDirty('bags', bag.id);                       // this device has an older edit queued
     const cloud = { id: bag.id, serial: bag.serial, status: 'IN_STOCK', condition: 'GOOD', updatedAt: later(60000) };
     Sync._mergeCollection('bags', { [bag.id]: cloud });
@@ -457,7 +470,7 @@ function run() {
     Store.bulkAdd('bags', Array.from({ length: 5000 }, (_, i) => ({ serial: `TEST-BG-${i}`, status: 'IN_STOCK' })));
     const queued = Store.data.outbox.length - before;
     Store.data.bags = Store.data.bags.filter((b) => !String(b.serial).startsWith('TEST-BG-'));
-    Store.data.outbox = Store.data.outbox.filter((o) => Store.byId(o.coll, o.id) || o.coll === 'settings');
+    Store.data.outbox = Store.data.outbox.filter((o) => !Array.isArray(Store.data[o.coll]) || Store.byId(o.coll, o.id));
     return queued === 5000;
   });
 
@@ -502,8 +515,15 @@ function run() {
     f.querySelector('#step-next').click();
     const two = shown();
     put('grossKg', '5600'); put('tareKg', '2000'); put('bagCount', '100');
-    f.querySelector('#step-next').click(); f.querySelector('#step-next').click();
-    return two === '0100' && shown() === '0001' && !f.querySelector('#step-submit').hidden;
+    f.querySelector('#step-next').click();
+    const cells = f.querySelectorAll('[data-fill]');
+    // 5% of 100 bags: all five must be entered before the bags step
+    cells[0].value = '92'; cells[0].dispatchEvent(new window.Event('input', { bubbles: true }));
+    f.querySelector('#step-next').click();
+    const blocked = shown() === '0010';
+    cells.forEach((c) => { c.value = '92'; c.dispatchEvent(new window.Event('input', { bubbles: true })); });
+    f.querySelector('#step-next').click();
+    return two === '0100' && cells.length === 5 && blocked && shown() === '0001' && !f.querySelector('#step-submit').hidden;
   });
 
   results.push('\nLIVE REPORTS AND PRINTING');
@@ -551,6 +571,132 @@ function run() {
     return n > 0 && n <= 96;
   });
 
+  results.push('\nOWNER\'S LIST OF 12 NOVEMBER');
+  session('admin', 'kasun.perera@efpl.org');
+  App.render();
+  const printed = (fn) => {
+    fn();
+    const root = window.document.getElementById('print-root');
+    const out = root ? root.innerHTML : '';
+    window.dispatchEvent(new window.Event('afterprint'));
+    return out;
+  };
+  const supWithBank = Store.all('suppliers').find((x) => x.bankAccount);
+  const accepted = Store.all('deliveries').find((x) => x.status === 'ACCEPTED' && x.supplierId === (supWithBank || {}).id)
+    || Store.all('deliveries').find((x) => x.status === 'ACCEPTED');
+  const acceptedSup = Store.byId('suppliers', accepted.supplierId);
+
+  check('the site is Balangoda, and the old site name is moved over', () => {
+    const s0 = Store.data.settings;
+    const keep = Object.assign({}, s0);
+    s0.rev = 0; s0.siteLocation = 'Nawa' + 'gaththegama';
+    Store.migrateSettings();
+    const moved = s0.siteLocation;
+    Object.assign(s0, keep);
+    return Store.settings().siteLocation === 'Balangoda' && moved === 'Balangoda';
+  });
+  check('a new yard starts with 30 bays of 200 bags', () => {
+    Store.useSpace('live');
+    const empty = Store.all('bays').length === 0;
+    const made = App.ensureBays();
+    const bays = Store.all('bays');
+    const ok = empty && made === 30 && bays.length === 30 && bays.every((b) => b.capacityBags === 200);
+    Store.data.bays = []; Store.data.outbox = []; Store.save('test-cleanup');
+    Store.useSpace('demo');
+    return ok;
+  });
+  check('a bay can be resized (bay size is flexible)', () => {
+    App.navigate('bays');
+    const bay = Store.all('bays').find((b) => b.code === 'BAY-8');
+    closeModals();
+    App.editBay(bay.id);
+    const box = window.document.querySelector('.modal [name=capacityBags]');
+    box.value = '250';
+    window.document.querySelector('.modal [data-act=save]').click();
+    const ok = Store.byId('bays', bay.id).capacityBags === 250;
+    Store.update('bays', bay.id, { capacityBags: 200 }, 'test-revert');
+    closeModals();
+    return ok;
+  });
+  check('a bag dries 0.6 kg a day: 50 kg is about 30 kg after a month, never below 18 kg', () => {
+    const s0 = Store.settings();
+    const ago = (days) => new Date(Date.now() - days * 864e5).toISOString();
+    return Domain.driedBagKg(50, ago(30), s0) === 32 && Domain.driedBagKg(50, ago(100), s0) === 18 && Domain.driedBagKg(50, ago(0), s0) === 50;
+  });
+  check('dry bays are marked red on the bay screen', () => {
+    App.navigate('bays');
+    const tiles = window.document.querySelectorAll('.bay-tile.is-dry');
+    const ready = Store.all('bays').filter((b) => { const x = window.VH.bayNow(b); return x && x.ready; }).length;
+    return ready > 0 && tiles.length === ready;
+  });
+  check('tapping a bay shows what is in it now, with a History button', () => {
+    const bay = Store.all('bays').find((b) => window.VH.bagsInBay(b.id) > 0);
+    closeModals();
+    App.openBay(bay.id);
+    const m = window.document.querySelector('.modal');
+    const ok = /In the bay now/.test(m.textContent) && /Moisture today/.test(m.textContent) && !!m.querySelector('[data-act=history]');
+    closeModals();
+    return ok;
+  });
+  check('bay history lists loads in and out with the moisture each time', () => {
+    const bay = Store.all('bays').find((b) => b.code === 'BAY-1');
+    const rows = window.VH.bayHistory(bay.id);
+    closeModals();
+    App.bayHistory(bay.id);
+    const shown = window.document.querySelector('.modal').textContent;
+    closeModals();
+    return rows.some((r) => r.kind === 'in') && rows.some((r) => r.kind === 'out')
+      && rows.every((r) => r.kind === 'weigh' || typeof r.moisture === 'number') && /history/.test(shown);
+  });
+  check('a blank fill-check sheet prints one box per sample bag (5% of 120 = 6)', () => {
+    const html = printed(() => App.printFillSheet({ bagCount: 120 }));
+    return /Fill check sheet/.test(html) && /Bag 6/.test(html) && !/Bag 7/.test(html);
+  });
+  check('every print carries the logo', () => {
+    const pay = Store.all('payments')[0];
+    const docs = [
+      printed(() => App.printReceipt(accepted.id)),
+      printed(() => App.printInvoice(accepted.id)),
+      printed(() => App.printFillSheet({})),
+      printed(() => App.printPaymentSlip(pay.id)),
+      printed(() => App.printSupplierStatement(acceptedSup.id)),
+    ];
+    const labels = printed(() => App.printLabels(accepted.id));
+    return docs.every((h) => h.includes('print-logo')) && labels.includes('sticker-logo');
+  });
+  check('the invoice and the receipt carry the supplier\'s bank details', () => {
+    const inv = printed(() => App.printInvoice(accepted.id));
+    const rec = printed(() => App.printReceipt(accepted.id));
+    return !!acceptedSup.bankAccount && /Purchase invoice/.test(inv) && inv.includes(acceptedSup.bankAccount) && rec.includes(acceptedSup.bankAccount);
+  });
+  check('supplier search on Receive biomass narrows the list', () => {
+    App.navigate('intake');
+    const f = window.document.querySelector('#intake-form');
+    const find = f.querySelector('#sup-find');
+    find.value = acceptedSup.name;
+    find.dispatchEvent(new window.Event('input', { bubbles: true }));
+    const opts = [...f.querySelectorAll('[name=supplierId] option')].filter((o) => o.value);
+    return opts.length === 1 && f.querySelector('[name=supplierId]').value === acceptedSup.id && !!f.querySelector('#sup-new');
+  });
+  check('an administrator can remove a user, and add the same email back later', () => {
+    const u = Store.all('users').find((x) => x.role === 'storekeeper' && !x.deleted);
+    Auth.removeUser(u.id);
+    const gone = !Auth.listUsers().some((x) => x.id === u.id) && Store.byId('users', u.id).active === false;
+    Auth.createUser({ email: u.email, name: u.name, role: 'storekeeper' });
+    const back = Auth.listUsers().some((x) => x.id === u.id && x.active !== false);
+    return gone && back;
+  });
+  check('there is no Farmers screen in any menu', () => {
+    return !App.routes.farmers && !App.visibleScreens().includes('farmers') && !/Farmers/.test(window.document.querySelector('.app-shell').textContent);
+  });
+  check('no Sinhala text on any screen', () => {
+    for (const r of Object.keys(App.routes)) {
+      App.navigate(r);
+      if (/[඀-෿]/.test(window.document.body.textContent)) throw new Error(`Sinhala text on ${r}`);
+    }
+    return true;
+  });
+
   results.push('\nSECURITY');
   check('suspended state hides the app from ordinary staff', () => {
     Store.data.config.subscription = { status: 'SUSPENDED', message: 'Paused for testing', updatedAt: new Date().toISOString(), updatedBy: 'x' };
@@ -572,11 +718,8 @@ function run() {
   session();
   App.render();
 
-  check('HTML from a farmer name is escaped, not executed', () => {
-    const farmer = Store.all('farmers')[0];
-    farmer.name = '<img src=x onerror=alert(1)>';
-    const html = UI.esc(farmer.name);
-    farmer.name = 'R. M. Jayasundara';
+  check('HTML from a supplier name is escaped, not executed', () => {
+    const html = UI.esc('<img src=x onerror=alert(1)>');
     return !html.includes('<img') && html.includes('&lt;img');
   });
   check('role permissions are enforced for the operator role', () => {

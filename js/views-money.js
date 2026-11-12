@@ -1,5 +1,5 @@
 /* =====================================================================
-   views-money.js — payments, suppliers, farmers, quality, returns,
+   views-money.js — payments, suppliers, quality, returns,
    reports and administration (including the owner's kill switch).
    ===================================================================== */
 (function () {
@@ -9,7 +9,7 @@
   const { esc, money, kg, dt, dOnly, badge } = UI;
 
   const supplierName = (id) => (Store.byId('suppliers', id) || {}).name || '—';
-  const farmerName = (id) => (Store.byId('farmers', id) || {}).name || '—';
+
 
   /* ============================== PAYMENTS =========================== */
   App.register('payments', {
@@ -37,7 +37,7 @@
           </div>
         </div>
         <div id="payment-table"></div>
-        <p class="muted small">A payment stays a draft until the supplier has declared which farmer each bag came from.</p>`;
+        <p class="muted small">A payment is created when a load is accepted, then goes to the supervisor, to Head Office, and is marked paid. Open one to see the supplier's bank details.</p>`;
 
       const draw = (filter) => {
         const list = filter === 'ALL' ? payments : payments.filter((p) => p.status === filter);
@@ -70,12 +70,12 @@
     const p = Store.byId('payments', id);
     if (!p) return;
     const d = Store.byId('deliveries', p.deliveryId);
-    const split = (d && d.farmerSplit) || [];
-    const splitTotal = split.reduce((a, f) => a + Number(f.bags || 0), 0);
-    const canApprove = Auth.can('payment.approve') && p.status === 'PENDING_SUPERVISOR';
+    const sup = Store.byId('suppliers', p.supplierId) || {};
+    // "Draft" only exists on payments made before the farmer step was removed
+    const canApprove = Auth.can('payment.approve') && ['PENDING_SUPERVISOR', 'DRAFT'].includes(p.status);
     const canRelease = Auth.can('payment.release') && p.status === 'APPROVED';
     const canPay = Auth.can('payment.pay') && p.status === 'SENT_TO_HEAD_OFFICE';
-    const canSplit = Auth.can('payment.split') && p.status === 'DRAFT';
+
     // The deduction can be corrected by the supervisor until the payment is authorised.
     const canDeduct = Auth.can('payment.approve') && ['DRAFT', 'PENDING_SUPERVISOR'].includes(p.status);
 
@@ -102,12 +102,9 @@
             ${p.deductionReason ? `<p class="small muted">Reason: ${esc(p.deductionReason)}</p>` : ''}
           </div>
           <div class="nm-inset pad-sm">
-            <h4>Farmer declaration</h4>
-            ${split.length ? `<table class="mini"><thead><tr><th>Farmer</th><th class="num">Bags</th><th class="num">Share</th></tr></thead>
-              <tbody>${split.map((f) => `<tr><td>${esc(f.code)} · ${esc(f.name)}</td><td class="num">${f.bags}</td>
-                <td class="num">${money(D.round2(p.netAmount * (f.bags / (splitTotal || 1))))}</td></tr>`).join('')}</tbody></table>
-              <p class="small ${splitTotal === p.bags ? 't-ok' : 't-warn'}">${splitTotal} of ${p.bags} bags declared</p>`
-              : '<p class="muted">Not declared. Required before authorisation.</p>'}
+            <h4>Pay to</h4>
+            ${VH.bankHtml(sup)}
+            ${d && (d.allocations || []).length ? `<h4>Stored in</h4><p>${d.allocations.map((a) => `${esc(a.bayCode)} (${a.bags})`).join(', ')}</p>` : ''}
           </div>
           <div class="nm-inset pad-sm">
             <h4>Status</h4>
@@ -120,7 +117,7 @@
         </div>`,
       footer: `
         <button class="nm-btn" data-act="slip"><i class="i i-printer"></i>Payment slip</button>
-        ${canSplit ? '<button class="nm-btn" data-act="split">Declare farmer split</button>' : ''}
+        ${d && d.status === 'ACCEPTED' ? '<button class="nm-btn" data-act="invoice"><i class="i i-printer"></i>Invoice</button>' : ''}
         ${canDeduct ? '<button class="nm-btn" data-act="deduct">Change deduction</button>' : ''}
         ${canApprove ? '<button class="nm-btn primary" data-act="approve">Authorise</button>' : ''}
         ${canRelease ? '<button class="nm-btn primary" data-act="release">Release to Head Office</button>' : ''}
@@ -131,7 +128,7 @@
           if (!btn) return;
           const act = btn.dataset.act;
           if (act === 'slip') return App.printPaymentSlip(p.id);
-          if (act === 'split') { close(); return App.farmerSplitFlow(p.deliveryId); }
+          if (act === 'invoice') return App.printInvoice(p.deliveryId);
           if (act === 'deduct') { close(); return App.deductionFlow(p.id); }
           const now = new Date().toISOString();
           const who = Auth.current().email;
@@ -141,7 +138,7 @@
             VH.audit('payment.' + action.toLowerCase(), 'payment', p.id, `${p.paymentNo} · ${money(p.netAmount)}${note ? ' · ' + note : ''}`);
           };
           if (act === 'approve') {
-            if (splitTotal !== p.bags) return UI.toast('The farmer declaration is incomplete', 'danger');
+
             push('APPROVED', el.querySelector('[name=approveNote]') ? el.querySelector('[name=approveNote]').value : 'Verified', { status: 'APPROVED', approvedBy: who, approvedAt: now });
             UI.toast('Payment authorised', 'ok');
           }
@@ -225,8 +222,6 @@
     if (!p) return;
     const d = Store.byId('deliveries', p.deliveryId);
     const f = (Store.byId('suppliers', p.supplierId) || {});
-    const split = (d && d.farmerSplit) || [];
-    const total = split.reduce((a, x) => a + Number(x.bags || 0), 0) || 1;
     const html = `${VH.printHeader('Payment authorisation', `${p.paymentNo} · ${D.PAYMENT_LABEL[p.status]}`)}
       <table>
         <tr><th>Supplier</th><td>${esc(f.code || '')} · ${esc(f.name || '')}</td><th>Delivery</th><td>${d ? esc(d.receiptNo) : '—'}</td></tr>
@@ -235,9 +230,11 @@
         ${p.deductionReason ? `<tr><th>Reason for deduction</th><td colspan="3">${esc(p.deductionReason)}</td></tr>` : ''}
         <tr><th>Net payable</th><td colspan="3"><b>${money(p.netAmount)}</b></td></tr>
       </table>
-      <h2>Farmer declaration</h2>
-      <table><thead><tr><th>Code</th><th>Farmer</th><th>Bags</th><th>Value share</th></tr></thead>
-        <tbody>${split.map((x) => `<tr><td>${esc(x.code)}</td><td>${esc(x.name)}</td><td>${x.bags}</td><td>${money(D.round2(p.netAmount * (x.bags / total)))}</td></tr>`).join('')}</tbody></table>
+      <h2>Pay to</h2>
+      <table>
+        <tr><th>Account name</th><td>${esc(f.bankAccountName || f.name || '')}</td><th>Account number</th><td>${esc(f.bankAccount || '')}</td></tr>
+        <tr><th>Bank</th><td>${esc(f.bankName || f.bank || '')}</td><th>Branch</th><td>${esc(f.bankBranch || '')}</td></tr>
+      </table>
       <h2>Authorisation trail</h2>
       <table><thead><tr><th>When</th><th>Who</th><th>Action</th><th>Note</th></tr></thead>
         <tbody>${(p.history || []).map((h) => `<tr><td>${esc(dt(h.at))}</td><td>${esc(h.by)}</td><td>${esc(h.action)}</td><td>${esc(h.note || '')}</td></tr>`).join('')}</tbody></table>
@@ -254,7 +251,7 @@
       const suppliers = Store.where('suppliers', (s) => !s.deleted);
       view.innerHTML = `
         <div class="toolbar">
-          <div class="toolbar-left"><input class="nm-input search" id="sup-search" placeholder="Search supplier, code, village…" /></div>
+          <div class="toolbar-left"><input class="nm-input search" id="sup-search" type="search" placeholder="Search name, code, phone, village or account" /></div>
           <div class="toolbar-right">${Auth.can('supplier.write') ? '<button class="nm-btn primary" id="add-sup"><i class="i i-plus"></i>Add supplier</button>' : ''}</div>
         </div>
         <div id="sup-table"></div>`;
@@ -263,15 +260,15 @@
         let list = suppliers;
         if (q) {
           const s = q.toLowerCase();
-          list = list.filter((x) => `${x.name} ${x.code} ${x.address} ${x.phone}`.toLowerCase().includes(s));
+          list = list.filter((x) => `${x.name} ${x.code} ${x.address || ''} ${x.phone || ''} ${x.nic || ''} ${x.bankAccount || ''} ${x.bank || ''}`.toLowerCase().includes(s));
         }
         view.querySelector('#sup-table').innerHTML = UI.table({
           rows: list, empty: 'No suppliers yet.', rowKey: (r) => r.id,
           columns: [
             { label: 'Code', render: (r) => `<b class="mono">${esc(r.code)}</b>` },
-            { label: 'Supplier', render: (r) => `${esc(r.name)}${r.isFarmer ? ' <span class="pill">also a farmer</span>' : ''}<div class="muted small">${esc(r.address || '')}</div>` },
+            { label: 'Supplier', render: (r) => `${esc(r.name)}<div class="muted small">${esc(r.address || '')}</div>` },
             { label: 'Contact', render: (r) => `${esc(r.phone || '—')}<div class="muted small">${esc(r.nic || '')}</div>` },
-            { label: 'Farmers', cls: 'num', render: (r) => Store.where('farmers', (f) => f.supplierId === r.id && !f.deleted).length },
+            { label: 'Bank', render: (r) => (VH.hasBank(r) ? `<span class="small">${esc(r.bankName || r.bank || '')}</span><div class="muted small mono">${esc(r.bankAccount || '')}</div>` : '<span class="t-warn small">not on file</span>') },
             { label: 'Bags (30d)', cls: 'num', render: (r) => Store.where('deliveries', (d) => d.supplierId === r.id && d.status === 'ACCEPTED' && Date.now() - Date.parse(d.acceptedAt || 0) < 30 * 864e5).reduce((a, d) => a + d.bagCount, 0).toLocaleString() },
             { label: 'Status', render: (r) => badge(r.status || 'ACTIVE', (r.status || 'ACTIVE') === 'ACTIVE' ? 'ok' : 'muted') },
             { label: '', cls: 'actions', render: (r) => `<button class="nm-btn tiny" data-sup="${r.id}">Open</button>` },
@@ -286,7 +283,8 @@
     },
   });
 
-  App.editSupplier = function (id) {
+  /** Add or edit a supplier. With onSaved, the caller is told instead of the screen being redrawn. */
+  App.editSupplier = function (id, onSaved) {
     const s = id ? Store.byId('suppliers', id) : null;
     UI.modal({
       title: s ? `Edit ${s.name}` : 'Add a supplier',
@@ -296,32 +294,45 @@
           ${UI.field('NIC / registration', UI.input('nic', { value: s ? s.nic : '', placeholder: '781234567V' }))}
           ${UI.field('Phone', UI.input('phone', { value: s ? s.phone : '', placeholder: '077 123 4567' }))}
           ${UI.field('Address / village', UI.input('address', { value: s ? s.address : '' }))}
-          ${UI.field('Bank account', UI.input('bank', { value: s ? s.bank : '', placeholder: 'BOC · 0071234567' }))}
           ${UI.field('Status', UI.select('status', [{ value: 'ACTIVE', label: 'Active' }, { value: 'INACTIVE', label: 'Inactive' }], { value: s ? s.status : 'ACTIVE' }))}
         </div>
-        <label class="check"><input type="checkbox" name="isFarmer" ${s && s.isFarmer ? 'checked' : ''} />
-          <span>This supplier is also a registered farmer (requirement 10) — link to a farmer record</span></label>
-        ${UI.field('Linked farmer', UI.select('farmerId', VH.farmerOptions(), { value: s && s.farmerId ? s.farmerId : '', placeholder: 'None' }))}`,
+        <h4>Bank details for payment</h4>
+        <div class="grid-2">
+          ${UI.field('Bank', UI.input('bankName', { value: s ? (s.bankName || s.bank || '') : '', placeholder: 'Bank of Ceylon', list: 'bank-list' }))}
+          ${UI.field('Branch', UI.input('bankBranch', { value: s ? (s.bankBranch || '') : '', placeholder: 'Balangoda' }))}
+          ${UI.field('Account number', UI.input('bankAccount', { value: s ? (s.bankAccount || '') : '', placeholder: '0071234567' }))}
+          ${UI.field('Account name', UI.input('bankAccountName', { value: s ? (s.bankAccountName || '') : '', placeholder: 'As printed on the passbook' }), 'Leave empty if it is the supplier name.')}
+        </div>
+        <datalist id="bank-list">${['Bank of Ceylon', 'People\'s Bank', 'Commercial Bank', 'Hatton National Bank', 'Sampath Bank', 'Seylan Bank', 'National Savings Bank', 'Nations Trust Bank', 'DFCC Bank', 'Regional Development Bank', 'Sanasa Development Bank'].map((b) => `<option value="${esc(b)}"></option>`).join('')}</datalist>`,
       footer: '<button class="nm-btn" data-close>Cancel</button><button class="nm-btn primary" data-act="save">Save supplier</button>',
       onMount(el, close) {
         el.querySelector('[data-act=save]').addEventListener('click', () => {
           const f = UI.formData(el.querySelector('.modal-body'));
-          if (!f.name) return UI.toast('Name is required', 'warn');
+          const errors = [];
+          if (!f.name) errors.push('Enter the supplier name');
+          const dupe = f.name && Store.where('suppliers', (x) => !x.deleted && (!s || x.id !== s.id) && x.name.trim().toLowerCase() === f.name.toLowerCase())[0];
+          if (dupe) errors.push(`${dupe.code} is already called ${dupe.name}. Open that supplier instead, or change the name.`);
+          if (f.bankAccount && !f.bankName) errors.push('Enter the bank for that account number');
+          UI.showErrors(el, errors);
+          if (errors.length) return;
           const payload = {
-            name: f.name, nic: f.nic, phone: f.phone, address: f.address, bank: f.bank,
-            status: f.status, isFarmer: !!f.isFarmer, farmerId: f.farmerId || null,
+            name: f.name, nic: f.nic, phone: f.phone, address: f.address, status: f.status,
+            bankName: f.bankName, bankBranch: f.bankBranch, bankAccount: f.bankAccount, bankAccountName: f.bankAccountName,
+            bank: [f.bankName, f.bankAccount].filter(Boolean).join(' · '),
           };
+          let rec = s;
           if (s) {
             Store.update('suppliers', s.id, payload, 'supplier-update');
             VH.audit('supplier.update', 'supplier', s.id, s.name);
           } else {
-            const rec = Store.add('suppliers', Object.assign({
+            rec = Store.add('suppliers', Object.assign({
               code: 'SUP-' + String(Store.nextSeq('supplier', 1)).padStart(4, '0'),
             }, payload), 'supplier-create');
             VH.audit('supplier.create', 'supplier', rec.id, `${rec.code} · ${rec.name}`);
           }
-          UI.toast('Supplier saved', 'ok');
-          close(); App.refresh();
+          UI.toast(`${rec.code} ${rec.name} saved`, 'ok');
+          close();
+          if (onSaved) onSaved(rec); else App.refresh();
         });
       },
     });
@@ -330,7 +341,6 @@
   App.openSupplier = function (id) {
     const s = Store.byId('suppliers', id);
     if (!s) return;
-    const farmers = Store.where('farmers', (f) => f.supplierId === id && !f.deleted);
     const deliveries = Store.where('deliveries', (d) => d.supplierId === id).slice().sort((a, b) => Date.parse(b.deliveredAt) - Date.parse(a.deliveredAt));
     const payments = Store.where('payments', (p) => p.supplierId === id);
     const issues = Store.where('qualityIssues', (q) => q.supplierId === id);
@@ -347,15 +357,13 @@
           <div class="nm-inset pad-sm">
             <h4>Contact</h4>
             <p>${esc(s.phone || '—')}<br/><span class="muted">${esc(s.address || '')}<br/>${esc(s.nic || '')}</span></p>
-            <h4>Bank</h4><p>${esc(s.bank || '—')}</p>
             <h4>Score</h4>
             <p>Avg fill <b>${avgFill === null ? '—' : `${avgFill}%`}</b><br/>
                Quality issues <b>${issues.length}</b> (${issues.filter((i) => i.status === 'OPEN').length} open)</p>
           </div>
           <div class="nm-inset pad-sm">
-            <h4>Farmers (${farmers.length})</h4>
-            <ul class="plain-list">${farmers.slice(0, 12).map((f) => `<li>${esc(f.code)} · ${esc(f.name)} <span class="muted small">${esc(f.village || '')}</span></li>`).join('') || '<li class="muted">None registered.</li>'}</ul>
-            ${Auth.can('farmer.write') ? '<button class="nm-btn tiny" data-act="addfarmer"><i class="i i-plus"></i>Add farmer</button>' : ''}
+            <h4>Bank details for payment</h4>
+            ${VH.bankHtml(s)}
           </div>
           <div class="nm-inset pad-sm">
             <h4>Recent deliveries</h4>
@@ -371,7 +379,7 @@
           const b = e.target.closest('[data-act]');
           if (!b) return;
           if (b.dataset.act === 'edit') { close(); App.editSupplier(s.id); }
-          if (b.dataset.act === 'addfarmer') { close(); App.editFarmer(null, s.id); }
+
           if (b.dataset.act === 'stmt') App.printSupplierStatement(s.id);
         });
       },
@@ -383,6 +391,7 @@
     const deliveries = Store.where('deliveries', (d) => d.supplierId === id && d.status === 'ACCEPTED');
     const payments = Store.where('payments', (p) => p.supplierId === id);
     const html = `${VH.printHeader('Supplier statement', `${s.code} · ${s.name}`)}
+      <p class="meta">${esc([s.address, s.phone, s.nic ? `NIC ${s.nic}` : ''].filter(Boolean).join(' · '))}<br/>Pay to: ${esc(VH.bankText(s))}</p>
       <table><thead><tr><th>Receipt</th><th>Date</th><th>Bags</th><th>Net kg</th><th>Fill</th><th>Unit price</th><th>Deducted</th><th>Payable</th></tr></thead>
         <tbody>${deliveries.map((d) => `<tr><td>${esc(d.receiptNo)}</td><td>${esc(dOnly(d.deliveredAt))}</td><td>${d.bagCount}</td><td>${d.netKg}</td>
           <td>${d.fillCheck && d.fillCheck.avgFillPct !== null ? d.fillCheck.avgFillPct + '%' : '—'}</td><td>${money(d.fillCheck ? d.fillCheck.unitPrice : 0)}</td>
@@ -393,115 +402,6 @@
     UI.print(html, `Statement ${s.code}`);
   };
 
-  /* =============================== FARMERS =========================== */
-  App.register('farmers', {
-    title: 'Farmers',
-    render(view) {
-      const farmers = Store.where('farmers', (f) => !f.deleted);
-      view.innerHTML = `
-        <div class="toolbar">
-          <div class="toolbar-left">
-            <input class="nm-input search" id="f-search" placeholder="Search farmer, code, village…" />
-            ${UI.select('supFilter', [{ value: '', label: 'All suppliers' }, ...VH.supplierOptions()], { id: 'f-sup' })}
-          </div>
-          <div class="toolbar-right">${Auth.can('farmer.write') ? '<button class="nm-btn primary" id="add-farmer"><i class="i i-plus"></i>Add farmer</button>' : ''}</div>
-        </div>
-        <div id="f-table"></div>`;
-      const draw = () => {
-        const q = view.querySelector('#f-search').value.trim().toLowerCase();
-        const sup = view.querySelector('#f-sup').value;
-        let list = farmers;
-        if (sup) list = list.filter((f) => f.supplierId === sup);
-        if (q) list = list.filter((f) => `${f.name} ${f.code} ${f.village} ${f.farmerNo}`.toLowerCase().includes(q));
-        view.querySelector('#f-table').innerHTML = UI.table({
-          rows: list, empty: 'No farmers match.', rowKey: (r) => r.id,
-          columns: [
-            { label: 'Code', render: (r) => `<b class="mono">${esc(r.code)}</b>` },
-            { label: 'Farmer', render: (r) => `${esc(r.name)}<div class="muted small">${esc(r.village || '')}${r.farmerNo ? ` · reg ${esc(r.farmerNo)}` : ''}</div>` },
-            { label: 'Supplier', render: (r) => esc(r.supplierId ? supplierName(r.supplierId) : '—') },
-            { label: 'Phone', render: (r) => esc(r.phone || '—') },
-            { label: 'Bags (30d)', cls: 'num', render: (r) => Store.where('bags', (b) => b.farmerId === r.id && Date.now() - Date.parse(b.deliveredAt || 0) < 30 * 864e5).length.toLocaleString() },
-            { label: '', cls: 'actions', render: (r) => `<button class="nm-btn tiny" data-farmer="${r.id}">Open</button>` },
-          ],
-        });
-        UI.$$('[data-farmer]', view).forEach((b) => b.addEventListener('click', () => App.openFarmer(b.dataset.farmer)));
-      };
-      draw();
-      view.querySelector('#f-search').addEventListener('input', UI.debounce(draw, 200));
-      view.querySelector('#f-sup').addEventListener('change', draw);
-      const add = view.querySelector('#add-farmer');
-      if (add) add.addEventListener('click', () => App.editFarmer(null, null));
-    },
-  });
-
-  App.editFarmer = function (id, presetSupplier) {
-    const f = id ? Store.byId('farmers', id) : null;
-    UI.modal({
-      title: f ? `Edit ${f.name}` : 'Register a farmer',
-      body: `<div class="form-errors" role="alert"></div>
-        <div class="grid-2">
-          ${UI.field('Name', UI.input('name', { value: f ? f.name : '', required: true }))}
-          ${UI.field('Supplier', UI.select('supplierId', VH.supplierOptions(), { value: f ? f.supplierId : (presetSupplier || ''), placeholder: 'Select supplier…' }))}
-          ${UI.field('Farmer registration no.', UI.input('farmerNo', { value: f ? f.farmerNo : '', placeholder: 'F12 / as used on the tag' }))}
-          ${UI.field('Village', UI.input('village', { value: f ? f.village : '' }))}
-          ${UI.field('NIC', UI.input('nic', { value: f ? f.nic : '' }))}
-          ${UI.field('Phone', UI.input('phone', { value: f ? f.phone : '' }))}
-          ${UI.field('Land (acres)', UI.input('landAcres', { type: 'number', min: 0, step: '0.1', value: f ? f.landAcres : '' }))}
-          ${UI.field('Status', UI.select('status', [{ value: 'ACTIVE', label: 'Active' }, { value: 'INACTIVE', label: 'Inactive' }], { value: f ? f.status : 'ACTIVE' }))}
-        </div>`,
-      footer: '<button class="nm-btn" data-close>Cancel</button><button class="nm-btn primary" data-act="save">Save farmer</button>',
-      onMount(el, close) {
-        el.querySelector('[data-act=save]').addEventListener('click', () => {
-          const data = UI.formData(el.querySelector('.modal-body'));
-          if (!data.name) return UI.toast('Name is required', 'warn');
-          const payload = {
-            name: data.name, supplierId: data.supplierId || null, farmerNo: data.farmerNo,
-            village: data.village, nic: data.nic, phone: data.phone,
-            landAcres: data.landAcres, status: data.status,
-          };
-          if (f) { Store.update('farmers', f.id, payload, 'farmer-update'); VH.audit('farmer.update', 'farmer', f.id, payload.name); }
-          else {
-            const rec = Store.add('farmers', Object.assign({ code: 'FRM-' + String(Store.nextSeq('farmer', 1)).padStart(4, '0') }, payload), 'farmer-create');
-            VH.audit('farmer.create', 'farmer', rec.id, `${rec.code} · ${rec.name}`);
-          }
-          UI.toast('Farmer saved', 'ok');
-          close(); App.refresh();
-        });
-      },
-    });
-  };
-
-  App.openFarmer = function (id) {
-    const f = Store.byId('farmers', id);
-    if (!f) return;
-    const bags = Store.where('bags', (b) => b.farmerId === id);
-    const issues = Store.where('qualityIssues', (q) => q.farmerId === id);
-    UI.modal({
-      title: `${f.code} · ${f.name}`,
-      body: `<div class="detail-grid">
-        <div class="nm-inset pad-sm">
-          <h4>Details</h4>
-          <p>${esc(f.village || '—')}<br/><span class="muted">${esc(f.phone || '')} · ${esc(f.nic || '')}</span><br/>
-             Supplier: <b>${esc(f.supplierId ? supplierName(f.supplierId) : '—')}</b><br/>
-             Registration: <b>${esc(f.farmerNo || '—')}</b></p>
-        </div>
-        <div class="nm-inset pad-sm">
-          <h4>Supply record</h4>
-          <p>Bags in system: <b>${bags.length}</b><br/>
-             In bays: <b>${bags.filter((b) => b.status === 'STORED').length}</b><br/>
-             Consumed: <b>${bags.filter((b) => b.status === 'CONSUMED').length}</b><br/>
-             Quality issues: <b>${issues.length}</b> (${issues.filter((i) => i.status === 'OPEN').length} open)</p>
-        </div>
-      </div>
-      ${issues.length ? `<h4>Issues traced to this farmer</h4><ul class="plain-list">${issues.map((i) => `<li>${esc(i.issueNo)} · ${esc(i.category)} <span class="muted small">${esc(i.status)}</span></li>`).join('')}</ul>` : ''}`,
-      footer: Auth.can('farmer.write') ? '<button class="nm-btn" data-act="edit">Edit</button>' : '',
-      onMount(el, close) {
-        const b = el.querySelector('[data-act=edit]');
-        if (b) b.addEventListener('click', () => { close(); App.editFarmer(f.id, null); });
-      },
-    });
-  };
-
   /* ============================ QUALITY ISSUES ======================= */
   App.register('quality', {
     title: 'Quality issues',
@@ -509,16 +409,16 @@
       const issues = Store.all('qualityIssues').slice().sort((a, b) => Date.parse(b.reportedAt) - Date.parse(a.reportedAt));
       view.innerHTML = `
         <section class="nm-card pad">
-          <div class="card-head"><h3>Problems traced to a supplier and a farmer</h3>
+          <div class="card-head"><h3>Problems traced to the supplier</h3>
             ${Auth.can('quality.report') ? '<button class="nm-btn primary" id="new-issue"><i class="i i-plus"></i>Report an issue</button>' : ''}</div>
-          <p class="muted">When biomass causes trouble at the gasifier, the bag serial leads to the supplier and the farmer, so the corrective action reaches the right people.</p>
+          <p class="muted">When biomass causes trouble at the gasifier, the bag serial leads to the supplier who delivered it, so the corrective action reaches the right person.</p>
         </section>
         ${UI.table({
           rows: issues, empty: 'No quality issues reported.', rowKey: (r) => r.id,
           columns: [
             { label: 'Issue', render: (r) => `<b>${esc(r.issueNo)}</b><div class="muted small">${esc(dOnly(r.reportedAt))}</div>` },
             { label: 'Bag', render: (r) => `<span class="mono">${esc(r.bagSerial || '—')}</span>` },
-            { label: 'Supplier and farmer', render: (r) => `${esc(r.supplierName || supplierName(r.supplierId))}<div class="muted small">${esc(r.farmerName || farmerName(r.farmerId))}</div>` },
+            { label: 'Supplier', render: (r) => esc(r.supplierName || supplierName(r.supplierId)) },
             { label: 'Category', render: (r) => esc((r.category || '').replace(/_/g, ' ').toLowerCase()) },
             { label: 'Severity', render: (r) => badge(r.severity, r.severity === 'HIGH' ? 'danger' : r.severity === 'MEDIUM' ? 'warn' : 'muted') },
             { label: 'Status', render: (r) => badge(r.status, r.status === 'OPEN' ? 'warn' : 'ok') },
@@ -536,7 +436,7 @@
     UI.modal({
       title: 'Report a quality issue',
       size: 'md',
-      body: `<p class="muted">Enter the serial from the bag tag. The supplier and farmer are filled in automatically — that is the whole point of numbering the bag.</p>
+      body: `<p class="muted">Enter the serial from the bag tag. The supplier is filled in automatically from the bag number.</p>
         <div class="form-errors" role="alert"></div>
         ${UI.field('Bag serial', UI.input('serial', { value: serial || '', placeholder: 'EFPL-BG-000302', list: 'serial-list' }))}
         <datalist id="serial-list">${serials.slice(0, 200).map((b) => `<option value="${esc(b.serial)}"></option>`).join('')}</datalist>
@@ -553,7 +453,7 @@
         </div>
         ${UI.field('What happened?', UI.textarea('description', { rows: 3, placeholder: 'Gasifier flame unstable, bag weight 30 kg at consumption…' }))}
         ${UI.field('Corrective action', UI.textarea('correctiveAction', { rows: 2, placeholder: 'Supplier to dry before bagging; mix 1:2 with a drier bay.' }))}
-        ${UI.field('How were they informed?', UI.input('notifiedVia', { placeholder: 'Phone call to supplier + WhatsApp to farmer group' }))}`,
+        ${UI.field('How were they informed?', UI.input('notifiedVia', { placeholder: 'Phone call to the supplier' }))}`,
       footer: '<button class="nm-btn" data-close>Cancel</button><button class="nm-btn primary" data-act="save">Record issue</button>',
       onMount(el, close) {
         const input = el.querySelector('[name=serial]');
@@ -564,7 +464,7 @@
           const r = D.traceBag(Store, v);
           if (!r) { box.innerHTML = '<span class="t-warn">Serial not found in the registry</span>'; return; }
           box.innerHTML = `<div><span class="muted small">Supplier</span><b>${esc(r.supplier ? r.supplier.name : '—')}</b></div>
-            <div><span class="muted small">Farmer</span><b>${esc(r.farmer ? r.farmer.name : 'not declared')}</b></div>
+
             <div><span class="muted small">Bay</span><b>${esc(r.bag.bayCode || '—')}</b></div>
             <div><span class="muted small">Status</span><b>${esc(D.BAG_STATUS_LABEL[r.bag.status] || r.bag.status)}</b></div>`;
         };
@@ -580,7 +480,7 @@
             issueNo: 'QI-' + String(Store.nextSeq('quality', 1)).padStart(4, '0'),
             bagSerial: r.bag.serial, deliveryId: r.bag.deliveryId || null,
             supplierId: r.bag.supplierId || null, supplierName: r.supplier ? r.supplier.name : null,
-            farmerId: r.bag.farmerId || null, farmerName: r.farmer ? r.farmer.name : null,
+
             category: data.category, severity: data.severity, description: data.description,
             correctiveAction: data.correctiveAction || '', status: 'OPEN',
             reportedBy: Auth.current().email, reportedAt: new Date().toISOString(),
@@ -605,7 +505,7 @@
       body: `<p>${badge(q.severity, q.severity === 'HIGH' ? 'danger' : q.severity === 'MEDIUM' ? 'warn' : 'muted')} ${badge(q.status, q.status === 'OPEN' ? 'warn' : 'ok')}</p>
         <div class="detail-grid">
           <div class="nm-inset pad-sm"><h4>Traced to</h4>
-            <p>Supplier: <b>${esc(q.supplierName || '—')}</b><br/>Farmer: <b>${esc(q.farmerName || '—')}</b><br/>
+            <p>Supplier: <b>${esc(q.supplierName || '—')}</b><br/>
             Bay: <b>${esc(r && r.bag.bayCode ? r.bag.bayCode : '—')}</b><br/>
             Receipt: <b>${esc(r && r.delivery ? r.delivery.receiptNo : '—')}</b></p></div>
           <div class="nm-inset pad-sm"><h4>Reported</h4>
@@ -616,13 +516,13 @@
         <h4>Corrective action</h4><p>${esc(q.correctiveAction || '—')}</p>
         ${q.status === 'RESOLVED' ? `<p class="small t-ok">Resolved ${esc(dt(q.resolvedAt))} by ${esc(q.resolvedBy || '')}</p>` : ''}`,
       footer: q.status === 'OPEN' && Auth.can('quality.resolve')
-        ? '<button class="nm-btn" data-act="notify">Mark supplier &amp; farmer notified</button><button class="nm-btn primary" data-act="resolve">Resolve</button>' : '',
+        ? '<button class="nm-btn" data-act="notify">Mark supplier notified</button><button class="nm-btn primary" data-act="resolve">Resolve</button>' : '',
       onMount(el, close) {
         el.addEventListener('click', (e) => {
           const b = e.target.closest('[data-act]');
           if (!b) return;
           if (b.dataset.act === 'notify') {
-            Store.update('qualityIssues', q.id, { notifiedAt: new Date().toISOString(), notifiedVia: 'Supplier + farmer informed by supervisor' }, 'quality-notify');
+            Store.update('qualityIssues', q.id, { notifiedAt: new Date().toISOString(), notifiedVia: 'Supplier informed by the supervisor' }, 'quality-notify');
             VH.audit('quality.notify', 'quality', q.id, `${q.issueNo} notified`);
             UI.toast('Notification recorded', 'ok'); close(); App.refresh();
           }
@@ -733,7 +633,7 @@
           const pool = Store.where('bags', (b) => b.status === 'CONSUMED' || b.status === 'RETURNED')
             .slice().sort((a, b) => Date.parse(a.consumedAt || a.updatedAt || 0) - Date.parse(b.consumedAt || b.updatedAt || 0));
           const now = new Date().toISOString();
-          const cleared = { supplierId: null, farmerId: null, bayId: null, bayCode: null, deliveryId: null, usageId: null, bagIssueId: null, returnedAt: now, updatedAt: now };
+          const cleared = { supplierId: null, bayId: null, bayCode: null, deliveryId: null, usageId: null, bagIssueId: null, returnedAt: now, updatedAt: now };
           let i = 0;
           const move = (n, patch) => {
             for (let k = 0; k < n && i < pool.length; k++, i++) { Object.assign(pool[i], cleared, patch); Store.markDirty('bags', pool[i].id); }
@@ -1129,7 +1029,7 @@
                   : Auth.roleOf(u) === 'pending' ? badge('awaiting approval', 'warn')
                   : `<button class="switch ${u.active !== false ? 'on' : ''}" data-toggle="${u.id}" aria-pressed="${u.active !== false}" title="Enable / disable"></button>` },
                 { label: 'Sign-in', render: (u) => `<span class="muted small">${esc(u.lastLoginAt ? dt(u.lastLoginAt) : (u.pendingSince ? 'just now' : 'never'))}</span>` },
-                { label: '', cls: 'actions', render: (u) => `<button class="nm-btn tiny" data-reset="${esc(u.email)}">Reset password</button>` },
+                { label: '', cls: 'actions', render: (u) => `<button class="nm-btn tiny" data-reset="${esc(u.email)}">Reset password</button>${Auth.isSuper(u) || (Auth.current() || {}).email === u.email ? '' : ` <button class="nm-btn tiny danger-ghost" data-remove-user="${esc(u.id)}">Remove</button>`}` },
               ],
               empty: 'Nobody has joined yet. Ask staff to open the app and tap Continue with Google.',
             })}
@@ -1321,6 +1221,22 @@
             Sync.now('user-active');
             UI.toast('Account updated', 'ok');
             show('users');
+          }));
+          UI.$$('[data-remove-user]', body).forEach((btn) => btn.addEventListener('click', async () => {
+            const u = Store.byId('users', btn.dataset.removeUser);
+            if (!u) return;
+            const ok = await UI.confirm({
+              title: `Remove ${u.name || u.email}?`, confirmText: 'Remove account',
+              message: `${u.email} is signed out on every device and can no longer open the app. What they did stays in the records and the activity log. You can add the same email again later.`,
+            });
+            if (!ok) return;
+            try {
+              Auth.removeUser(u.id);
+              VH.audit('user.remove', 'user', u.email, `${u.email} removed`);
+              UI.toast(`${u.name || u.email} removed`, 'ok');
+              Sync.now('user-remove');
+              show('users');
+            } catch (e) { UI.toast(e.message, 'danger'); }
           }));
           UI.$$('[data-reset]', body).forEach((btn) => btn.addEventListener('click', async () => {
             try {
