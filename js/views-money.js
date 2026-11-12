@@ -37,7 +37,7 @@
           </div>
         </div>
         <div id="payment-table"></div>
-        <p class="muted small">Requirement 10: a payment cannot move past draft until the supplier has declared which farmer each bag came from.</p>`;
+        <p class="muted small">A payment stays a draft until the supplier has declared which farmer each bag came from.</p>`;
 
       const draw = (filter) => {
         const list = filter === 'ALL' ? payments : payments.filter((p) => p.status === filter);
@@ -49,7 +49,8 @@
             { label: 'Supplier', render: (p) => `${esc(p.supplierName || supplierName(p.supplierId))}<div class="muted small">${esc(p.supplierCode || '')}</div>` },
             { label: 'Bags', cls: 'num', render: (p) => (p.bags || 0).toLocaleString() },
             { label: 'Unit price', cls: 'num', render: (p) => money(p.unitPrice) },
-            { label: 'Net amount', cls: 'num', render: (p) => `<b>${money(p.netAmount)}</b>` },
+            { label: 'Deducted', cls: 'num', render: (p) => (p.deductions ? `<span class="t-danger">${p.deductionPct ? `${p.deductionPct}% · ` : ''}${money(p.deductions)}</span>` : '<span class="muted">—</span>') },
+            { label: 'Payable', cls: 'num', render: (p) => `<b>${money(p.netAmount)}</b>` },
             { label: 'Status', render: (p) => badge(D.PAYMENT_LABEL[p.status] || p.status, UI.statusTone(p.status)) },
             { label: '', cls: 'actions', render: (p) => `<button class="nm-btn tiny" data-pay="${p.id}">Open</button>` },
           ],
@@ -75,6 +76,8 @@
     const canRelease = Auth.can('payment.release') && p.status === 'APPROVED';
     const canPay = Auth.can('payment.pay') && p.status === 'SENT_TO_HEAD_OFFICE';
     const canSplit = Auth.can('payment.split') && p.status === 'DRAFT';
+    // The deduction can be corrected by the supervisor until the payment is authorised.
+    const canDeduct = Auth.can('payment.approve') && ['DRAFT', 'PENDING_SUPERVISOR'].includes(p.status);
 
     UI.modal({
       title: `Payment ${p.paymentNo}`,
@@ -93,9 +96,10 @@
               <tr><td>Bags</td><td class="num">${p.bags}</td></tr>
               <tr><td>Unit price</td><td class="num">${money(p.unitPrice)}</td></tr>
               <tr><td>Gross</td><td class="num">${money(p.grossAmount)}</td></tr>
-              <tr><td>Deductions</td><td class="num">${money(p.deductions || 0)}</td></tr>
+              <tr><td>Deducted${p.deductionPct ? ` (${p.deductionPct}%)` : ''}</td><td class="num ${p.deductions ? 't-danger' : ''}">${p.deductions ? '− ' : ''}${money(p.deductions || 0)}</td></tr>
               <tr><th>Net payable</th><th class="num">${money(p.netAmount)}</th></tr>
             </table>
+            ${p.deductionReason ? `<p class="small muted">Reason: ${esc(p.deductionReason)}</p>` : ''}
           </div>
           <div class="nm-inset pad-sm">
             <h4>Farmer declaration</h4>
@@ -117,6 +121,7 @@
       footer: `
         <button class="nm-btn" data-act="slip"><i class="i i-printer"></i>Payment slip</button>
         ${canSplit ? '<button class="nm-btn" data-act="split">Declare farmer split</button>' : ''}
+        ${canDeduct ? '<button class="nm-btn" data-act="deduct">Change deduction</button>' : ''}
         ${canApprove ? '<button class="nm-btn primary" data-act="approve">Authorise</button>' : ''}
         ${canRelease ? '<button class="nm-btn primary" data-act="release">Release to Head Office</button>' : ''}
         ${canPay ? '<button class="nm-btn primary" data-act="paid">Mark as paid</button>' : ''}`,
@@ -127,6 +132,7 @@
           const act = btn.dataset.act;
           if (act === 'slip') return App.printPaymentSlip(p.id);
           if (act === 'split') { close(); return App.farmerSplitFlow(p.deliveryId); }
+          if (act === 'deduct') { close(); return App.deductionFlow(p.id); }
           const now = new Date().toISOString();
           const who = Auth.current().email;
           const push = (action, note, patch) => {
@@ -153,6 +159,67 @@
     });
   };
 
+  /** Set or correct the percentage taken off a batch (never a rejection). */
+  App.deductionFlow = function (id) {
+    const p = Store.byId('payments', id);
+    if (!p) return;
+    if (!Auth.can('payment.approve') || !['DRAFT', 'PENDING_SUPERVISOR'].includes(p.status)) {
+      return UI.toast('The deduction can only be changed before the payment is authorised', 'warn');
+    }
+    const d = Store.byId('deliveries', p.deliveryId);
+    UI.modal({
+      title: `Deduction on ${p.paymentNo}`,
+      body: `<div class="form-errors" role="alert"></div>
+        <p class="muted">The load has been received. This takes a percentage off its value, for example for wet biomass.</p>
+        ${d && d.avgBagKg ? VH.moistureScale(d.avgBagKg, { compact: true }) : ''}
+        <div class="grid-2" style="margin-top:12px">
+          ${UI.field('Deduct from this batch (%)', UI.input('deductionPct', { type: 'number', min: 0, max: 100, step: '0.5', value: p.deductionPct || 0 }))}
+          ${UI.field('Reason for the deduction', UI.input('deductionReason', { value: p.deductionReason || '', placeholder: 'Wet load, foreign material…' }))}
+        </div>
+        <div class="calc-strip" id="deduct-out"></div>`,
+      footer: '<button class="nm-btn" data-close>Cancel</button><button class="nm-btn primary" data-act="save">Save deduction</button>',
+      onMount(el, close) {
+        const pctEl = el.querySelector('[name=deductionPct]');
+        const calc = () => D.applyDeduction(p.bags, p.unitPrice, pctEl.value);
+        const paint = () => {
+          const m = calc();
+          el.querySelector('#deduct-out').innerHTML = `
+            <div><span class="muted small">${p.bags} bags at ${money(p.unitPrice)}</span><b>${money(m.grossAmount)}</b></div>
+            <div><span class="muted small">Deducted (${m.deductionPct}%)</span><b class="${m.deductions ? 't-danger' : ''}">${m.deductions ? '− ' : ''}${money(m.deductions)}</b></div>
+            <div><span class="muted small">Payable to the supplier</span><b>${money(m.netAmount)}</b></div>`;
+        };
+        pctEl.addEventListener('input', paint);
+        paint();
+        el.querySelector('[data-act=save]').addEventListener('click', () => {
+          const m = calc();
+          const raw = Number(pctEl.value);
+          const reason = el.querySelector('[name=deductionReason]').value.trim();
+          const errors = [];
+          if (pctEl.value !== '' && (!Number.isFinite(raw) || raw < 0 || raw > 100)) errors.push('Enter a percentage between 0 and 100');
+          if (m.deductionPct > 0 && !reason) errors.push('Write the reason for the deduction');
+          UI.showErrors(el, errors);
+          if (errors.length) return;
+          const now = new Date().toISOString();
+          const note = m.deductionPct ? `${m.deductionPct}% deducted: ${reason}` : 'Deduction removed';
+          Store.update('payments', p.id, {
+            grossAmount: m.grossAmount, deductionPct: m.deductionPct, deductionReason: m.deductionPct ? reason : '',
+            deductions: m.deductions, netAmount: m.netAmount,
+            history: (p.history || []).concat([{ at: now, by: Auth.current().email, action: 'DEDUCTION_SET', note }]),
+          }, 'payment-deduction');
+          if (d) {
+            Store.update('deliveries', d.id, {
+              deductionPct: m.deductionPct, deductionReason: m.deductionPct ? reason : '',
+              deductionAmount: m.deductions, payableAmount: m.netAmount,
+            }, 'delivery-deduction');
+          }
+          VH.audit('payment.deduction', 'payment', p.id, `${p.paymentNo} · ${note} · payable ${money(m.netAmount)}`);
+          UI.toast(m.deductionPct ? `${m.deductionPct}% deducted, ${money(m.netAmount)} payable` : 'Deduction removed', 'ok');
+          close(); App.refresh();
+        });
+      },
+    });
+  };
+
   App.printPaymentSlip = function (id) {
     const p = Store.byId('payments', id);
     if (!p) return;
@@ -164,7 +231,8 @@
       <table>
         <tr><th>Supplier</th><td>${esc(f.code || '')} · ${esc(f.name || '')}</td><th>Delivery</th><td>${d ? esc(d.receiptNo) : '—'}</td></tr>
         <tr><th>Bags</th><td>${p.bags}</td><th>Unit price</th><td>${money(p.unitPrice)}</td></tr>
-        <tr><th>Gross value</th><td>${money(p.grossAmount)}</td><th>Deductions</th><td>${money(p.deductions || 0)}</td></tr>
+        <tr><th>Gross value</th><td>${money(p.grossAmount)}</td><th>Deducted${p.deductionPct ? ` (${p.deductionPct}%)` : ''}</th><td>${money(p.deductions || 0)}</td></tr>
+        ${p.deductionReason ? `<tr><th>Reason for deduction</th><td colspan="3">${esc(p.deductionReason)}</td></tr>` : ''}
         <tr><th>Net payable</th><td colspan="3"><b>${money(p.netAmount)}</b></td></tr>
       </table>
       <h2>Farmer declaration</h2>
@@ -315,9 +383,10 @@
     const deliveries = Store.where('deliveries', (d) => d.supplierId === id && d.status === 'ACCEPTED');
     const payments = Store.where('payments', (p) => p.supplierId === id);
     const html = `${VH.printHeader('Supplier statement', `${s.code} · ${s.name}`)}
-      <table><thead><tr><th>Receipt</th><th>Date</th><th>Bags</th><th>Net kg</th><th>Fill</th><th>Unit price</th><th>Value</th></tr></thead>
+      <table><thead><tr><th>Receipt</th><th>Date</th><th>Bags</th><th>Net kg</th><th>Fill</th><th>Unit price</th><th>Deducted</th><th>Payable</th></tr></thead>
         <tbody>${deliveries.map((d) => `<tr><td>${esc(d.receiptNo)}</td><td>${esc(dOnly(d.deliveredAt))}</td><td>${d.bagCount}</td><td>${d.netKg}</td>
-          <td>${d.fillCheck ? d.fillCheck.avgFillPct + '%' : '—'}</td><td>${money(d.fillCheck ? d.fillCheck.unitPrice : 0)}</td><td>${money(d.fillCheck ? d.fillCheck.amount : 0)}</td></tr>`).join('')}</tbody></table>
+          <td>${d.fillCheck && d.fillCheck.avgFillPct !== null ? d.fillCheck.avgFillPct + '%' : '—'}</td><td>${money(d.fillCheck ? d.fillCheck.unitPrice : 0)}</td>
+          <td>${d.deductionPct ? `${d.deductionPct}%` : '—'}</td><td>${money(VH.payable(d))}</td></tr>`).join('')}</tbody></table>
       <h2>Payments</h2>
       <table><thead><tr><th>Payment</th><th>Status</th><th>Net</th><th>Date</th></tr></thead>
         <tbody>${payments.map((p) => `<tr><td>${esc(p.paymentNo)}</td><td>${esc(D.PAYMENT_LABEL[p.status])}</td><td>${money(p.netAmount)}</td><td>${esc(dOnly(p.createdAt))}</td></tr>`).join('')}</tbody></table>`;
@@ -440,16 +509,16 @@
       const issues = Store.all('qualityIssues').slice().sort((a, b) => Date.parse(b.reportedAt) - Date.parse(a.reportedAt));
       view.innerHTML = `
         <section class="nm-card pad">
-          <div class="card-head"><h3>Problems traced back to a supplier and a farmer</h3>
+          <div class="card-head"><h3>Problems traced to a supplier and a farmer</h3>
             ${Auth.can('quality.report') ? '<button class="nm-btn primary" id="new-issue"><i class="i i-plus"></i>Report an issue</button>' : ''}</div>
-          <p class="muted">Requirement 11: when the biomass causes trouble at the gasifier, the bag serial takes us to the round, the supplier and the farmer so the corrective action reaches the right people.</p>
+          <p class="muted">When biomass causes trouble at the gasifier, the bag serial leads to the supplier and the farmer, so the corrective action reaches the right people.</p>
         </section>
         ${UI.table({
           rows: issues, empty: 'No quality issues reported.', rowKey: (r) => r.id,
           columns: [
             { label: 'Issue', render: (r) => `<b>${esc(r.issueNo)}</b><div class="muted small">${esc(dOnly(r.reportedAt))}</div>` },
             { label: 'Bag', render: (r) => `<span class="mono">${esc(r.bagSerial || '—')}</span>` },
-            { label: 'Supplier → Farmer', render: (r) => `${esc(r.supplierName || supplierName(r.supplierId))}<div class="muted small">→ ${esc(r.farmerName || farmerName(r.farmerId))}</div>` },
+            { label: 'Supplier and farmer', render: (r) => `${esc(r.supplierName || supplierName(r.supplierId))}<div class="muted small">${esc(r.farmerName || farmerName(r.farmerId))}</div>` },
             { label: 'Category', render: (r) => esc((r.category || '').replace(/_/g, ' ').toLowerCase()) },
             { label: 'Severity', render: (r) => badge(r.severity, r.severity === 'HIGH' ? 'danger' : r.severity === 'MEDIUM' ? 'warn' : 'muted') },
             { label: 'Status', render: (r) => badge(r.status, r.status === 'OPEN' ? 'warn' : 'ok') },
@@ -482,7 +551,7 @@
             { value: 'LOW', label: 'Low' }, { value: 'MEDIUM', label: 'Medium' }, { value: 'HIGH', label: 'High' },
           ], { value: 'MEDIUM' }))}
         </div>
-        ${UI.field('What happened?', UI.textarea('description', { rows: 3, placeholder: 'Gasifier flame unstable, bag weight 25 kg at consumption…' }))}
+        ${UI.field('What happened?', UI.textarea('description', { rows: 3, placeholder: 'Gasifier flame unstable, bag weight 30 kg at consumption…' }))}
         ${UI.field('Corrective action', UI.textarea('correctiveAction', { rows: 2, placeholder: 'Supplier to dry before bagging; mix 1:2 with a drier bay.' }))}
         ${UI.field('How were they informed?', UI.input('notifiedVia', { placeholder: 'Phone call to supplier + WhatsApp to farmer group' }))}`,
       footer: '<button class="nm-btn" data-close>Cancel</button><button class="nm-btn primary" data-act="save">Record issue</button>',
@@ -572,21 +641,24 @@
     title: 'Bag returns',
     render(view) {
       const bags = Store.all('bags');
-      const returned = bags.filter((b) => b.status === 'RETURNED');
+      const returned = bags.filter((b) => b.status === 'CONSUMED' || b.status === 'RETURNED');
       const damaged = bags.filter((b) => b.status === 'DAMAGED');
       const returns = Store.all('bagReturns').slice().sort((a, b) => Date.parse(b.returnedAt) - Date.parse(a.returnedAt));
       const pendingReplacement = returns.reduce((a, r) => a + (r.replacementOrderQty || 0), 0);
 
       view.innerHTML = `
         <section class="stats stats-4">
-          ${UI.stat('Empty bags returned', returned.length.toLocaleString(), 'ready to re-issue')}
-          ${UI.stat('Damaged', damaged.length.toLocaleString(), 'repair or replace', damaged.length ? 'warn' : null)}
+          ${UI.stat('Empty bags to check', returned.length.toLocaleString(), 'emptied at the gasifier', returned.length ? 'warn' : null)}
+          ${UI.stat('Being repaired', damaged.length.toLocaleString(), 'back to stock once fixed', damaged.length ? 'warn' : null)}
           ${UI.stat('Bags in store', bags.filter((b) => b.status === 'IN_STOCK').length.toLocaleString(), 'numbered and available')}
-          ${UI.stat('Replacement ordered', pendingReplacement.toLocaleString(), 'on the last orders')}
+          ${UI.stat('Replacements ordered', pendingReplacement.toLocaleString(), 'across all returns')}
         </section>
         <div class="toolbar">
-          <p class="muted">Requirement 14: empty bags come back to the bag area, are checked, repaired where possible, and replacements are ordered.</p>
-          <div class="toolbar-right">${Auth.can('returns.write') ? '<button class="nm-btn primary" id="new-return"><i class="i i-plus"></i>Record a return</button>' : ''}</div>
+          <p class="muted">Empty bags come back to the bag area, are checked, repaired where possible, and replacements are ordered.</p>
+          <div class="toolbar-right">
+            ${Auth.can('returns.write') && damaged.length ? `<button class="nm-btn" id="repaired-back">Repaired bags back to stock (${damaged.length})</button>` : ''}
+            ${Auth.can('returns.write') ? '<button class="nm-btn primary" id="new-return"><i class="i i-plus"></i>Record a return</button>' : ''}
+          </div>
         </div>
         ${UI.table({
           rows: returns, empty: 'No returns recorded yet.',
@@ -594,7 +666,7 @@
             { label: 'Return', render: (r) => `<b>${esc(r.returnNo)}</b><div class="muted small">${esc(dOnly(r.returnedAt))}</div>` },
             { label: 'Returned', cls: 'num', render: (r) => r.returnedBags },
             { label: 'Good', cls: 'num', render: (r) => r.good },
-            { label: 'Repaired', cls: 'num', render: (r) => r.repairable },
+            { label: 'For repair', cls: 'num', render: (r) => r.repairable },
             { label: 'Replaced', cls: 'num', render: (r) => r.replaced },
             { label: 'Order raised', render: (r) => (r.repairOrderRaised ? badge('repair order', 'ok') : '') + (r.replacementOrderQty ? ` ${badge(`${r.replacementOrderQty} new bags`, 'info')}` : '') },
             { label: 'Note', render: (r) => `<span class="muted small">${esc(r.note || '')}</span>` },
@@ -602,21 +674,38 @@
         })}`;
       const nr = view.querySelector('#new-return');
       if (nr) nr.addEventListener('click', () => App.recordReturn());
+      const rb = view.querySelector('#repaired-back');
+      if (rb) rb.addEventListener('click', async () => {
+        const ok = await UI.confirm({
+          title: 'Repaired bags back to stock?', tone: 'primary', confirmText: 'Back to stock',
+          message: `${damaged.length} repaired bag(s) keep their serial numbers and become available to issue again.`,
+        });
+        if (!ok) return;
+        const now = new Date().toISOString();
+        for (const b of damaged) { Object.assign(b, { status: 'IN_STOCK', condition: 'REPAIRED', updatedAt: now }); Store.markDirty('bags', b.id); }
+        Store.save('bag-repaired');
+        VH.audit('returns.repaired', 'bags', 'batch', `${damaged.length} repaired bags returned to stock`);
+        UI.toast(`${damaged.length} bags back in stock`, 'ok');
+        App.refresh();
+      });
     },
   });
 
   App.recordReturn = function () {
+    const waiting = Store.where('bags', (b) => b.status === 'CONSUMED' || b.status === 'RETURNED').length;
+    const start = Math.min(waiting, 50);
     UI.modal({
       title: 'Record a bag return',
       body: `<div class="form-errors" role="alert"></div>
+        <p class="muted">${waiting.toLocaleString()} empty bag(s) are waiting to be checked. Sort the returned bags into the three groups below.</p>
         <div class="grid-3">
-          ${UI.field('Bags returned', UI.input('returnedBags', { type: 'number', min: 1, value: 50, required: true }))}
-          ${UI.field('Good — back to stock', UI.input('good', { type: 'number', min: 0, value: 44 }))}
-          ${UI.field('Repairable', UI.input('repairable', { type: 'number', min: 0, value: 4 }))}
+          ${UI.field('Bags returned', UI.input('returnedBags', { type: 'number', min: 1, value: start, required: true }))}
+          ${UI.field('Good, back to stock', UI.input('good', { type: 'number', min: 0, value: start }))}
+          ${UI.field('Can be repaired', UI.input('repairable', { type: 'number', min: 0, value: 0 }))}
         </div>
         <div class="grid-2">
-          ${UI.field('Beyond repair (replace)', UI.input('replaced', { type: 'number', min: 0, value: 2 }))}
-          ${UI.field('New bags to order', UI.input('replacementOrderQty', { type: 'number', min: 0, value: 50 }))}
+          ${UI.field('Beyond repair (replace)', UI.input('replaced', { type: 'number', min: 0, value: 0 }))}
+          ${UI.field('New bags to order', UI.input('replacementOrderQty', { type: 'number', min: 0, value: 0 }))}
         </div>
         ${UI.field('Note', UI.input('note', { placeholder: 'Stitching repaired in-house…' }))}`,
       footer: '<button class="nm-btn" data-close>Cancel</button><button class="nm-btn primary" data-act="save">Save</button>',
@@ -625,7 +714,11 @@
           const data = UI.formData(el.querySelector('.modal-body'));
           const total = Number(data.returnedBags) || 0;
           const good = Number(data.good) || 0, repairable = Number(data.repairable) || 0, replaced = Number(data.replaced) || 0;
-          if (good + repairable + replaced > total) return UI.toast('The categories add up to more bags than were returned', 'danger');
+          const errors = [];
+          if (total < 1) errors.push('Enter how many bags were returned');
+          if (good + repairable + replaced > total) errors.push('The three groups add up to more bags than were returned');
+          UI.showErrors(el, errors);
+          if (errors.length) return;
           const rec = Store.add('bagReturns', {
             returnNo: 'BR-' + String(Store.nextSeq('bagReturn', 1)).padStart(4, '0'),
             returnedBags: total, good, repairable, replaced, lost: Math.max(0, total - good - repairable - replaced),
@@ -635,13 +728,22 @@
             note: data.note || '',
           }, 'bag-return-record');
 
-          // Return empty bag records to stock / damage
-          const pool = Store.where('bags', (b) => b.status === 'RETURNED').slice(0, good);
+          // Move the emptied bags on, oldest first. Each keeps its serial; the
+          // links to the finished trip are cleared so the next round starts clean.
+          const pool = Store.where('bags', (b) => b.status === 'CONSUMED' || b.status === 'RETURNED')
+            .slice().sort((a, b) => Date.parse(a.consumedAt || a.updatedAt || 0) - Date.parse(b.consumedAt || b.updatedAt || 0));
           const now = new Date().toISOString();
-          for (const b of pool) { Object.assign(b, { status: 'IN_STOCK', supplierId: null, farmerId: null, bayId: null, bayCode: null, deliveryId: null, returnedAt: now, updatedAt: now }); Store.markDirty('bags', b.id); }
+          const cleared = { supplierId: null, farmerId: null, bayId: null, bayCode: null, deliveryId: null, usageId: null, bagIssueId: null, returnedAt: now, updatedAt: now };
+          let i = 0;
+          const move = (n, patch) => {
+            for (let k = 0; k < n && i < pool.length; k++, i++) { Object.assign(pool[i], cleared, patch); Store.markDirty('bags', pool[i].id); }
+          };
+          move(good, { status: 'IN_STOCK', condition: 'GOOD' });
+          move(repairable, { status: 'DAMAGED', condition: 'REPAIR' });
+          move(replaced, { status: 'RETIRED', condition: 'BEYOND_REPAIR' });
           Store.save('bag-return-sync');
 
-          VH.audit('returns.record', 'bagReturn', rec.id, `${total} bags · ${good} good · ${repairable} repaired · ${replaced} replaced`);
+          VH.audit('returns.record', 'bagReturn', rec.id, `${total} bags · ${good} good · ${repairable} for repair · ${replaced} replaced`);
           UI.toast('Return recorded', 'ok');
           close(); App.refresh();
         });
@@ -663,14 +765,16 @@
         const bagsOut = usages.reduce((a, u) => a + (u.bags || 0), 0);
         const kgOut = usages.reduce((a, u) => a + (u.totalKg || 0), 0);
         const stock = Store.where('bags', (b) => b.status === 'STORED').length;
-        const value = deliveries.reduce((a, d) => a + ((d.fillCheck && d.fillCheck.amount) || 0), 0);
+        const value = deliveries.reduce((a, d) => a + VH.payable(d), 0);
+        const deducted = deliveries.reduce((a, d) => a + (Number(d.deductionAmount) || 0), 0);
         const bySupplier = {};
         for (const d of deliveries) {
           const k = d.supplierId;
-          bySupplier[k] = bySupplier[k] || { name: supplierName(k), bags: 0, kg: 0, value: 0, fills: [], issues: 0 };
+          bySupplier[k] = bySupplier[k] || { name: supplierName(k), bags: 0, kg: 0, value: 0, deducted: 0, fills: [], issues: 0 };
           bySupplier[k].bags += d.bagCount;
           bySupplier[k].kg += d.netKg || 0;
-          bySupplier[k].value += (d.fillCheck && d.fillCheck.amount) || 0;
+          bySupplier[k].value += VH.payable(d);
+          bySupplier[k].deducted += Number(d.deductionAmount) || 0;
           if (d.fillCheck && d.fillCheck.avgFillPct !== null) bySupplier[k].fills.push(d.fillCheck.avgFillPct);
         }
         for (const q of Store.all('qualityIssues')) {
@@ -685,7 +789,7 @@
             ${UI.stat('Bags received', bagsIn.toLocaleString(), `${(kgIn / 1000).toFixed(2)} t net`)}
             ${UI.stat('Bags consumed', bagsOut.toLocaleString(), `${(kgOut / 1000).toFixed(2)} t out`)}
             ${UI.stat('Stock on hand', stock.toLocaleString(), 'bags across all bays')}
-            ${UI.stat('Purchase value', money(value), `${payments.length} payments touched`, 'ok')}
+            ${UI.stat('Payable to suppliers', money(value), `${money(deducted)} deducted, ${payments.length} payments`, 'ok')}
           </section>
 
           <section class="cols-2">
@@ -695,9 +799,10 @@
                 <tr><th>Incoming (supplier)</th><td class="num">${bagsIn.toLocaleString()} bags</td><td class="num">${kg(kgIn)}</td></tr>
                 <tr><th>Outgoing (gasifier)</th><td class="num">${bagsOut.toLocaleString()} bags</td><td class="num">${kg(kgOut)}</td></tr>
                 <tr><th>Net movement</th><td class="num">${(bagsIn - bagsOut).toLocaleString()} bags</td><td class="num">${kg(kgIn - kgOut)}</td></tr>
-                <tr><th>Weight loss in store</th><td class="num">—</td><td class="num">${D.round2(((kgIn - kgOut) / (kgIn || 1)) * 100)}% of intake</td></tr>
+                <tr><th>Average bag in</th><td class="num">—</td><td class="num">${bagsIn ? `${D.round2(kgIn / bagsIn)} kg` : '—'}</td></tr>
+                <tr><th>Average bag out</th><td class="num">—</td><td class="num">${bagsOut ? `${D.round2(kgOut / bagsOut)} kg` : '—'}</td></tr>
               </table>
-              <p class="small muted">In-weight is the weighbridge net at receiving; out-weight is the three-bag average applied to the issue (requirement 7).</p>
+              <p class="small muted">In-weight is the weighbridge net at receiving. Out-weight is the three-bag average applied to each issue. A lighter bag going out than coming in means the stock dried in the bay.</p>
             </div>
             <div class="nm-card pad">
               <div class="card-head"><h3>Stock by bay</h3><button class="link" id="csv-stock"><i class="i i-download"></i>CSV</button></div>
@@ -715,7 +820,8 @@
                 { label: 'Bags', cls: 'num', render: (r) => r.bags.toLocaleString() },
                 { label: 'Net kg', cls: 'num', render: (r) => Math.round(r.kg).toLocaleString() },
                 { label: 'Avg fill', cls: 'num', render: (r) => (r.fills.length ? `${D.round2(r.fills.reduce((a, b) => a + b, 0) / r.fills.length)}%` : '—') },
-                { label: 'Value', cls: 'num', render: (r) => money(r.value) },
+                { label: 'Deducted', cls: 'num', render: (r) => (r.deducted ? `<span class="t-danger">${money(r.deducted)}</span>` : '—') },
+                { label: 'Payable', cls: 'num', render: (r) => money(r.value) },
                 { label: 'Quality issues', cls: 'num', render: (r) => `<span class="${r.issues ? 't-warn' : ''}">${r.issues}</span>` },
               ],
             })}
@@ -745,6 +851,8 @@
             receipt: d.receiptNo, date: dOnly(d.deliveredAt), supplier: supplierName(d.supplierId),
             bags: d.bagCount, netKg: d.netKg, fillPct: d.fillCheck ? d.fillCheck.avgFillPct : '',
             unitPrice: d.fillCheck ? d.fillCheck.unitPrice : '',
+            avgBagKg: d.avgBagKg || '', moisturePct: d.avgBagKg ? D.moistureFromWeight(d.avgBagKg, Store.settings()) : '',
+            deductionPct: d.deductionPct || 0, deductionReason: d.deductionReason || '', payable: VH.payable(d),
           }));
           UI.download(`incoming-${days}d.csv`, UI.toCSV(rows), 'text/csv');
         });
@@ -754,7 +862,7 @@
           const rows = deliveries.map((d) => ({
             supplier: supplierName(d.supplierId), receipt: d.receiptNo, bags: d.bagCount,
             netKg: d.netKg, fillPct: d.fillCheck ? d.fillCheck.avgFillPct : '',
-            value: d.fillCheck ? d.fillCheck.amount : 0,
+            deductionPct: d.deductionPct || 0, payable: VH.payable(d),
           }));
           UI.download(`suppliers-${days}d.csv`, UI.toCSV(rows), 'text/csv');
         });
@@ -871,23 +979,38 @@
         settings: () => `
           <section class="nm-card pad">
             <div class="card-head"><h3>Business settings</h3></div>
-            <p class="muted">These numbers drive every price the system calculates. Change them only against a signed agreement with the suppliers.</p>
+            <p class="muted">These numbers drive every price the app calculates. Change them only against a signed agreement with the suppliers.</p>
             <div class="grid-3">
               ${UI.field('Full unit price (Rs/bag)', UI.input('unitPrice', { type: 'number', min: 0, step: '0.01', value: s.unitPrice }))}
               ${UI.field('Reduced unit price (Rs/bag)', UI.input('reducedUnitPrice', { type: 'number', min: 0, step: '0.01', value: s.reducedUnitPrice }))}
               ${UI.field('Fill agreement (%)', UI.input('fillThresholdPct', { type: 'number', min: 50, max: 100, value: s.fillThresholdPct }))}
               ${UI.field('Sample size (% of bags)', UI.input('sampleSizePct', { type: 'number', min: 1, max: 100, value: s.sampleSizePct }))}
               ${UI.field('Minimum sample bags', UI.input('minSampleSize', { type: 'number', min: 1, max: 50, value: s.minSampleSize }))}
-              ${UI.field('Reference dry bag (kg)', UI.input('standardDryBagKg', { type: 'number', min: 5, max: 100, step: '0.1', value: s.standardDryBagKg }))}
-              ${UI.field('Moisture warning (%)', UI.input('moistureWarnPct', { type: 'number', min: 1, max: 90, value: s.moistureWarnPct }))}
-              ${UI.field('Moisture reject (%)', UI.input('moistureRejectPct', { type: 'number', min: 1, max: 90, value: s.moistureRejectPct }))}
               ${UI.field('Bag serial prefix', UI.input('bagSerialPrefix', { value: s.bagSerialPrefix }))}
               ${UI.field('Maximum bags per delivery', UI.input('maxBagsPerDelivery', { type: 'number', min: 1, value: s.maxBagsPerDelivery }))}
               ${UI.field('Site name', UI.input('siteName', { value: s.siteName }))}
               ${UI.field('Site location', UI.input('siteLocation', { value: s.siteLocation }))}
               ${UI.field('Head Office email', UI.input('headOfficeEmail', { type: 'email', value: s.headOfficeEmail }))}
             </div>
-            <button class="nm-btn primary" id="save-settings">Save settings</button>
+
+            <h4>Moisture from bag weight</h4>
+            <p class="muted">Moisture is read from the bag weight on a straight line through two weighed points. The site line is 18 kg = 20% and 36 kg = 60%, which is moisture % = (40 ÷ 18) × kg − 20.</p>
+            <div class="grid-4">
+              ${UI.field('Point A, bag weight (kg)', UI.input('moistureCalKg1', { type: 'number', min: 1, max: 200, step: '0.1', value: D.moistureCalibration(s).kg1 }))}
+              ${UI.field('Point A, moisture (%)', UI.input('moistureCalPct1', { type: 'number', min: 0, max: 100, step: '0.1', value: D.moistureCalibration(s).pct1 }))}
+              ${UI.field('Point B, bag weight (kg)', UI.input('moistureCalKg2', { type: 'number', min: 1, max: 200, step: '0.1', value: D.moistureCalibration(s).kg2 }))}
+              ${UI.field('Point B, moisture (%)', UI.input('moistureCalPct2', { type: 'number', min: 0, max: 100, step: '0.1', value: D.moistureCalibration(s).pct2 }))}
+            </div>
+            <div class="grid-2">
+              ${UI.field('Damp from (%)', UI.input('moistureWarnPct', { type: 'number', min: 1, max: 99, value: s.moistureWarnPct }), 'Shown in amber from this reading.')}
+              ${UI.field('Wet from (%)', UI.input('moistureHighPct', { type: 'number', min: 1, max: 99, value: D.moistureHighPct(s) }), 'Shown in red. The load is still received; the supervisor decides the deduction.')}
+            </div>
+            <div class="grid-2">
+              ${UI.field('Suggested deduction, damp load (%)', UI.input('deductDampPct', { type: 'number', min: 0, max: 100, step: '0.5', value: s.deductDampPct ?? 5 }), 'Filled in when the supervisor accepts a damp load. They can change it.')}
+              ${UI.field('Suggested deduction, wet load (%)', UI.input('deductWetPct', { type: 'number', min: 0, max: 100, step: '0.5', value: s.deductWetPct ?? 10 }), 'Set both to 0 to turn suggestions off.')}
+            </div>
+            <div id="cal-preview"></div>
+            <div class="row-actions"><button class="nm-btn primary" id="save-settings">Save settings</button></div>
           </section>`,
 
         audit: () => `
@@ -1028,18 +1151,38 @@
         }
 
         if (tab === 'settings') {
+          const NUM_FIELDS = ['unitPrice', 'reducedUnitPrice', 'fillThresholdPct', 'sampleSizePct', 'minSampleSize',
+            'moistureCalKg1', 'moistureCalPct1', 'moistureCalKg2', 'moistureCalPct2',
+            'moistureWarnPct', 'moistureHighPct', 'deductDampPct', 'deductWetPct', 'maxBagsPerDelivery'];
+          const readNums = () => {
+            const out = {};
+            for (const k of NUM_FIELDS) out[k] = Number((body.querySelector(`[name=${k}]`) || {}).value);
+            return out;
+          };
+          const preview = () => {
+            const n = readNums();
+            const c = D.moistureCalibration(n);
+            body.querySelector('#cal-preview').innerHTML = `<div class="calc-strip">
+              ${[15, 18, 22, 27, 36].map((w) => `<div><span class="muted small">${w} kg bag</span><b>${D.moistureFromWeight(w, n)}%</b></div>`).join('')}
+              <div><span class="muted small">Formula</span><b>${D.round2(c.slope)} × kg ${c.offset < 0 ? '−' : '+'} ${D.round2(Math.abs(c.offset))}</b></div>
+            </div>`;
+          };
+          UI.$$('[name^=moistureCal]', body).forEach((i) => i.addEventListener('input', preview));
+          preview();
+
           body.querySelector('#save-settings').addEventListener('click', () => {
             if (!Auth.can('settings.write')) return UI.toast('Only an administrator can change settings', 'danger');
             const f = UI.formData(body);
-            const patch = {};
-            for (const k of ['unitPrice', 'reducedUnitPrice', 'fillThresholdPct', 'sampleSizePct', 'minSampleSize',
-              'standardDryBagKg', 'moistureWarnPct', 'moistureRejectPct', 'maxBagsPerDelivery']) {
-              patch[k] = Number(f[k]);
-            }
+            const patch = readNums();
+            if (NUM_FIELDS.some((k) => !Number.isFinite(patch[k]))) return UI.toast('Every number field needs a value', 'danger');
+            if (patch.moistureCalKg1 === patch.moistureCalKg2) return UI.toast('The two moisture points need different bag weights', 'danger');
+            if (patch.moistureWarnPct >= patch.moistureHighPct) return UI.toast('"Wet from" must be higher than "Damp from"', 'danger');
+            if ([patch.deductDampPct, patch.deductWetPct].some((v) => v < 0 || v > 100)) return UI.toast('Suggested deductions must be between 0 and 100%', 'danger');
+            if (patch.reducedUnitPrice > patch.unitPrice) return UI.toast('The reduced price cannot be above the full price', 'danger');
             patch.bagSerialPrefix = String(f.bagSerialPrefix || 'EFPL-BG').toUpperCase().replace(/[^A-Z0-9-]/g, '');
             patch.siteName = f.siteName; patch.siteLocation = f.siteLocation; patch.headOfficeEmail = f.headOfficeEmail;
             Store.patchSettings(patch);
-            VH.audit('settings.update', 'settings', 'singleton', `unit price ${patch.unitPrice}, threshold ${patch.fillThresholdPct}%`);
+            VH.audit('settings.update', 'settings', 'singleton', `unit price ${patch.unitPrice}/${patch.reducedUnitPrice}, fill ${patch.fillThresholdPct}%, moisture line ${patch.moistureCalKg1}kg=${patch.moistureCalPct1}% to ${patch.moistureCalKg2}kg=${patch.moistureCalPct2}%`);
             UI.toast('Settings saved', 'ok');
           });
         }

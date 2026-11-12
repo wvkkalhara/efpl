@@ -8,7 +8,7 @@
    ===================================================================== */
 window.EFPL_CONFIG = {
   appName: 'EnerFab Biomass Storage',
-  version: '1.2.0',
+  version: '1.3.0',
   build: '2026.11',
 
   /* ---- Firebase project (efpl-2feb8) ---- */
@@ -56,9 +56,14 @@ window.EFPL_CONFIG = {
     fillThresholdPct: 90,     // average fill % that keeps full price
     sampleSizePct: 5,         // % of bags pulled for the fill check
     minSampleSize: 3,
-    standardDryBagKg: 20,     // reference dry weight for the moisture estimate
-    moistureWarnPct: 25,
-    moistureRejectPct: 45,
+    // Moisture from bag weight: moisture % = (40 / 18) x kg - 20,
+    // i.e. the line through 18 kg = 20 % and 36 kg = 60 %.        (req 5, 6)
+    moistureCalKg1: 18, moistureCalPct1: 20,
+    moistureCalKg2: 36, moistureCalPct2: 60,
+    moistureWarnPct: 30,      // "damp" from here
+    moistureHighPct: 45,      // "wet" from here — a reason to deduct, never to reject
+    deductDampPct: 5,         // % proposed for a damp load (supervisor can change it)
+    deductWetPct: 10,         // % proposed for a wet load
     bagSerialPrefix: 'EFPL-BG',
     maxBagsPerDelivery: 2000,
     bayCount: 6,

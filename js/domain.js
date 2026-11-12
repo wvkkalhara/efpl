@@ -23,14 +23,14 @@
   const PERMISSIONS = {
     super_admin: ['*'],
     admin: [
-      'supplier.write', 'farmer.write', 'delivery.create', 'delivery.accept', 'delivery.reject',
+      'supplier.write', 'farmer.write', 'delivery.create', 'delivery.accept',
       'bag.generate', 'bag.issue', 'bay.allocate', 'usage.request', 'usage.approve',
       'usage.consume', 'quality.report', 'quality.resolve', 'payment.split', 'payment.approve',
       'payment.release', 'payment.pay', 'returns.write', 'report.read', 'audit.read',
       'user.manage', 'settings.write', 'data.manage',
     ],
     supervisor: [
-      'supplier.write', 'farmer.write', 'delivery.create', 'delivery.accept', 'delivery.reject',
+      'supplier.write', 'farmer.write', 'delivery.create', 'delivery.accept',
       'bay.allocate', 'bag.issue', 'usage.request', 'usage.approve', 'quality.report',
       'quality.resolve', 'payment.split', 'payment.approve', 'returns.write', 'report.read', 'audit.read',
     ],
@@ -72,7 +72,7 @@
     ISSUED: 'Issued to supplier',
     DELIVERED: 'Delivered (weighed)',
     STORED: 'In bay',
-    CONSUMED: 'Fed to gasifier',
+    CONSUMED: 'Emptied into gasifier',
     RETURNED: 'Returned empty',
     DAMAGED: 'Damaged',
     REPAIRED: 'Repaired',
@@ -85,7 +85,7 @@
     ISSUED: ['DELIVERED', 'IN_STOCK', 'LOST'],
     DELIVERED: ['STORED', 'RETURNED'],
     STORED: ['CONSUMED'],
-    CONSUMED: ['RETURNED'],
+    CONSUMED: ['RETURNED', 'IN_STOCK', 'DAMAGED', 'RETIRED'],
     RETURNED: ['IN_STOCK', 'DAMAGED', 'REPAIRED'],
     DAMAGED: ['REPAIRED', 'RETIRED'],
     REPAIRED: ['IN_STOCK'],
@@ -109,8 +109,10 @@
    * A random sample of bags is emptied into a cylindrical measuring drum.
    * Average fill height drives the unit price:
    *   >= 90 %  -> full price (Rs 300)
-   *   70-89 %  -> reduced price (Rs 270) or send back to be re-filled
-   *   < 70 %   -> recount / re-fill before acceptance
+   *   <  90 %  -> reduced price (Rs 270), or the supplier re-fills the bags
+   *               and they are counted and sampled again
+   * A load is never turned away: it is always received, and anything else
+   * that is wrong with it is handled as a percentage deduction (below).
    */
   function evaluateFillCheck(opts) {
     const settings = opts.settings || {};
@@ -129,16 +131,12 @@
     } else if (avg >= threshold) {
       decision = 'PASS_MARGINAL'; unitPrice = fullPrice;
       action = `Just above the ${threshold}% agreement — accept at full price, note the reading.`;
-    } else if (avg >= threshold - 20) {
-      decision = 'REDUCED_PRICE'; unitPrice = reduced;
-      action = `Below the ${threshold}% agreement — pay at Rs ${reduced}/bag, or send back for re-filling and recount.`;
     } else {
-      decision = 'RECOUNT_REQUIRED'; unitPrice = reduced;
-      action = 'Well below agreement — reject for re-filling, or accept at the reduced price with a written reason.';
+      decision = 'REDUCED_PRICE'; unitPrice = reduced;
+      action = `Below the ${threshold}% agreement — the whole batch is paid at Rs ${reduced}/bag. If the supplier re-fills the bags instead, count and sample them again.`;
     }
 
     if (opts.outcome === 'OVERRIDE_FULL_PRICE') { decision = 'OVERRIDDEN'; unitPrice = fullPrice; }
-    if (opts.outcome === 'REJECT') { decision = 'REJECTED'; }
 
     return {
       sampleSize: fills.length || sampleSizeFor(bagCount, settings),
@@ -150,18 +148,70 @@
   }
 
   /* ---------------------------- moisture ----------------------------- */
-  /** Bag weight is the field proxy for moisture (req 5 & 6). */
-  function moistureFromWeight(kg, settings) {
-    const dry = Number(settings.standardDryBagKg) || 20;
-    if (!kg) return null;
-    return Math.max(0, Math.min(80, Math.round((1 - dry / Number(kg)) * 1000) / 10));
+  /**
+   * Bag weight is the field measure of moisture (req 5 & 6).
+   * Site formula:  moisture % = (40 / 18) x bag kg - 20
+   * which is the straight line through two calibration points:
+   *   18 kg -> 20 %   and   36 kg -> 60 %.
+   * The two points are settings, so a re-calibration is not a code change.
+   */
+  function moistureCalibration(settings) {
+    const s = settings || {};
+    const num = (v, d) => (Number.isFinite(Number(v)) && v !== null && v !== '' ? Number(v) : d);
+    const kg1 = num(s.moistureCalKg1, 18), pct1 = num(s.moistureCalPct1, 20);
+    const kg2 = num(s.moistureCalKg2, 36), pct2 = num(s.moistureCalPct2, 60);
+    const slope = kg2 !== kg1 ? (pct2 - pct1) / (kg2 - kg1) : 40 / 18;
+    return { kg1, pct1, kg2, pct2, slope, offset: pct1 - slope * kg1 };
   }
 
+  function moistureFromWeight(kg, settings) {
+    const w = Number(kg);
+    if (!w || !Number.isFinite(w) || w <= 0) return null;
+    const c = moistureCalibration(settings);
+    return Math.max(0, Math.min(100, Math.round((c.slope * w + c.offset) * 10) / 10));
+  }
+
+  /** The bag weight that corresponds to a moisture % (inverse of the line). */
+  function weightForMoisture(pct, settings) {
+    const c = moistureCalibration(settings);
+    return c.slope ? round2((Number(pct) - c.offset) / c.slope) : null;
+  }
+
+  const moistureHighPct = (settings) => Number((settings || {}).moistureHighPct ?? (settings || {}).moistureRejectPct) || 45;
+
+  /** OK / WARN / HIGH. A high reading never turns a load away — it is a reason to deduct. */
   function moistureBand(pct, settings) {
     if (pct === null || pct === undefined) return 'UNKNOWN';
-    if (pct >= (Number(settings.moistureRejectPct) || 45)) return 'REJECT';
-    if (pct >= (Number(settings.moistureWarnPct) || 25)) return 'WARN';
+    if (pct >= moistureHighPct(settings)) return 'HIGH';
+    if (pct >= (Number((settings || {}).moistureWarnPct) || 30)) return 'WARN';
     return 'OK';
+  }
+  const MOISTURE_LABEL = { OK: 'dry enough', WARN: 'damp', HIGH: 'wet', UNKNOWN: '' };
+  const moistureTone = (band) => (band === 'OK' ? 'ok' : band === 'WARN' ? 'warn' : band === 'HIGH' ? 'danger' : 'muted');
+
+  /* ---------------------------- deductions --------------------------- */
+  /**
+   * Biomass is never rejected. A load that is wet, dirty or otherwise short
+   * of the agreement is still received, and a percentage is taken off the
+   * batch value instead.
+   */
+  /**
+   * The deduction the app proposes from the moisture reading. It is only a
+   * starting point: the supervisor can change or clear it before accepting.
+   */
+  function suggestedDeduction(moisturePct, settings) {
+    const s = settings || {};
+    const band = moistureBand(moisturePct, s);
+    const pick = (v, d) => (Number.isFinite(Number(v)) && v !== null && v !== '' ? Math.max(0, Math.min(100, Number(v))) : d);
+    const pct = band === 'HIGH' ? pick(s.deductWetPct, 10) : band === 'WARN' ? pick(s.deductDampPct, 5) : 0;
+    return { pct, band, reason: pct ? `${band === 'HIGH' ? 'Wet' : 'Damp'} load: moisture ${moisturePct}% from the bag weight` : '' };
+  }
+
+  function applyDeduction(bags, unitPrice, deductionPct) {
+    const pct = Math.max(0, Math.min(100, Number(deductionPct) || 0));
+    const gross = round2((Number(bags) || 0) * (Number(unitPrice) || 0));
+    const deductions = round2((gross * pct) / 100);
+    return { deductionPct: pct, grossAmount: gross, deductions, netAmount: round2(gross - deductions) };
   }
 
   /* ---------------------------- weighing ----------------------------- */
@@ -227,7 +277,9 @@
     const supplier = bag.supplierId ? Store.byId('suppliers', bag.supplierId) : null;
     const farmer = bag.farmerId ? Store.byId('farmers', bag.farmerId) : null;
     const issue = bag.bagIssueId ? Store.byId('bagIssues', bag.bagIssueId) : null;
-    const usage = Store.all('usageRequests').find((u) => (u.bagSerials || []).includes(bag.serial));
+    // A bag is re-used round after round, so only the run recorded on the
+    // bag itself belongs to its current trip.
+    const usage = bag.usageId ? Store.byId('usageRequests', bag.usageId) : null;
     const payment = delivery ? Store.all('payments').find((p) => p.deliveryId === delivery.id) : null;
     const quality = Store.all('qualityIssues').filter((q) => q.bagSerial === bag.serial);
     const events = Store.all('bagEvents').filter((e) => e.serial === bag.serial);
@@ -297,6 +349,7 @@
     ROLES, ASSIGNABLE_ROLES, ROLE_LABEL, PERMISSIONS, can,
     BAG_STATUS, BAG_STATUS_LABEL, BAG_TRANSITIONS, canTransition,
     round2, sampleSizeFor, evaluateFillCheck, moistureFromWeight, moistureBand,
+    moistureCalibration, weightForMoisture, moistureHighPct, MOISTURE_LABEL, moistureTone, applyDeduction, suggestedDeduction,
     weighTruck, avgBagWeight, PAYMENT_FLOW, PAYMENT_LABEL, paymentCanGo,
     bagSerial, serialRange, parseSerialNumber, traceBag, code39SVG,
     money, kg, pct, dt, dOnly, todayISO,

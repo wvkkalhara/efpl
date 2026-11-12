@@ -176,16 +176,26 @@
       notes: 'Bags delivered; verification of a count and quality still pending.',
     }, 'seed');
 
-    // 5) Rejected for re-filling (req 3 alternative).
-    Store.add('deliveries', {
+    // 5) A wet load. Nothing is sent back: it is received and 10% is deducted.
+    const wet = D.applyDeduction(160, 300, 10);
+    const d5 = Store.add('deliveries', {
       receiptNo: 'RC-2026-0005', supplierId: suppliers[4].id, biomassType: 'MIXED',
       vehicleNo: 'NW GH-9021', driverName: 'A. Rathnayake', driverNic: '198022334455',
-      grossKg: 5400, tareKg: 2000, netKg: 3400, bagCount: 160,
-      fillCheck: D.evaluateFillCheck({ bagCount: 160, fills: [61, 58, 64], settings }),
-      allocations: [], farmerSplit: [], status: 'REJECTED',
-      rejectedReason: 'Average fill 61% — sent back to the supplier to re-fill and recount.',
-      deliveredAt: ago(4, 11), demo: true,
+      grossKg: 6900, tareKg: 2000, netKg: 4900, bagCount: 160,
+      fillCheck: D.evaluateFillCheck({ bagCount: 160, fills: [93, 95, 92], settings }),
+      allocations: [{ bayId: bays[5].id, bayCode: 'BAY-6', bags: 160 }],
+      farmerSplit: [{ farmerId: farmers[11].id, code: farmers[11].code, name: farmers[11].name, bags: 160 }],
+      status: 'ACCEPTED', deliveredAt: ago(4, 11), acceptedAt: ago(4, 13), acceptedBy: 'nimal.silva@efpl.org',
+      deductionPct: wet.deductionPct, deductionAmount: wet.deductions, payableAmount: wet.netAmount,
+      deductionReason: 'Wet load: 30.6 kg per bag reads 48% moisture',
+      weighbridgeSlip: 'WB-8830', demo: true,
+      notes: 'Received wet after rain. Kept in the reserve bay to dry before use.',
     }, 'seed');
+
+    // Average bag weight is what the moisture reading comes from.
+    for (const d of Store.all('deliveries')) {
+      if (!d.avgBagKg) d.avgBagKg = D.avgBagWeight(d.netKg, d.bagCount);
+    }
 
     /* --------------------- assign bag serials ------------------------ */
     function assignRange(from, to, patch) {
@@ -234,6 +244,20 @@
     assignRange(batch3Start, batch3Start + 139, { farmerId: farmers[9].id });
     assignRange(batch3Start + 140, batch3End, { farmerId: farmers[10].id });
 
+    const issue4 = Store.add('bagIssues', {
+      roundNo: 4, supplierId: suppliers[4].id, qty: 160, mode: 'SERIAL_ONLY',
+      serials: D.serialRange(PREFIX, 721, 880), issuedAt: ago(6, 9),
+      issuedBy: 'chaminda.raj@efpl.org', sharedWith: 'Printed allocation slip', demo: true,
+    }, 'seed');
+    Store.update('deliveries', d5.id, { bagIssueId: issue4.id, serials: D.serialRange(PREFIX, 721, 880) }, 'seed');
+    assignRange(721, 880, {
+      status: 'STORED', supplierId: suppliers[4].id, deliveryId: d5.id, bagIssueId: issue4.id,
+      bayId: bays[5].id, bayCode: 'BAY-6', farmerId: farmers[11].id, condition: 'GOOD', deliveredAt: ago(4, 13),
+    });
+    assignRange(1, 300, { deliveredAt: ago(3, 10) });
+    assignRange(batch2Start, batch2End, { deliveredAt: ago(2, 11) });
+    assignRange(batch3Start, batch3End, { deliveredAt: ago(5, 9) });
+
     /* ---------------------------- payments --------------------------- */
     const p1 = Store.add('payments', {
       paymentNo: 'PAY-2026-0001', deliveryId: d1.id, supplierId: suppliers[0].id,
@@ -268,11 +292,27 @@
       ], demo: true,
     }, 'seed');
 
+    Store.add('payments', {
+      paymentNo: 'PAY-2026-0004', deliveryId: d5.id, supplierId: suppliers[4].id,
+      supplierCode: suppliers[4].code, supplierName: suppliers[4].name,
+      bags: 160, unitPrice: 300, grossAmount: wet.grossAmount, deductionPct: wet.deductionPct,
+      deductionReason: 'Wet load: 30.6 kg per bag reads 48% moisture',
+      deductions: wet.deductions, netAmount: wet.netAmount,
+      status: 'PENDING_SUPERVISOR', createdAt: ago(4, 13),
+      history: [{ at: ago(4, 13), by: 'nimal.silva@efpl.org', action: 'CREATED', note: 'Received wet, 10% deducted instead of sending the load back' }],
+      demo: true,
+    }, 'seed');
+
+    // Keep the running numbers ahead of the sample records.
+    Object.assign(Store.data.counters, {
+      receipt: 6, payment: 5, usage: 4, quality: 3, bagReturn: 2, supplier: SUPPLIERS.length + 1, farmer: FARMERS.length + 1,
+    });
+
     /* ------------------------ gasifier usage ------------------------- */
     const u1 = Store.add('usageRequests', {
       requestNo: 'USE-0001', bayId: bays[0].id, bayCode: 'BAY-1', bags: 45,
       requestedBy: 'sunil.ops@efpl.org', requestedAt: ago(2, 6), status: 'CONSUMED',
-      approvedBy: 'nimal.silva@efpl.org', approvedAt: ago(2, 7), approvedNote: 'Bag weight 22.1 kg — drier than Bay 4, use this bay first.',
+      approvedBy: 'nimal.silva@efpl.org', approvedAt: ago(2, 7), approvedNote: 'Test bag 22.1 kg, drier than Bay 4. Use this bay first.',
       sampleBags: [22.4, 21.9, 22.0], avgBagKg: 22.1, moisturePct: D.moistureFromWeight(22.1, settings),
       totalKg: 994.5, consumedAt: ago(2, 9), consumedBy: 'sunil.ops@efpl.org',
       bagSerials: D.serialRange(PREFIX, 1, 45), demo: true,
@@ -302,7 +342,7 @@
       usageId: u2.id, deliveryId: d2.id, supplierId: suppliers[1].id, supplierName: suppliers[1].name,
       farmerId: farmers[4].id, farmerName: farmers[4].name,
       severity: 'HIGH', category: 'MOISTURE',
-      description: 'Bag weight 25 kg at consumption was above the 20 kg reference and the gasifier showed flame instability. Suspected wet biomass from this batch.',
+      description: 'Bags weighed about 25 kg at consumption, which reads 35% moisture, and the gasifier flame was unstable. Suspected wet biomass from this batch.',
       correctiveAction: 'Supplier informed; bags from this batch to be mixed 1:2 with a drier bay until the batch is finished.',
       status: 'OPEN', reportedBy: 'sunil.ops@efpl.org', reportedAt: ago(1, 10),
       notifiedAt: ago(1, 12), notifiedVia: 'Phone call to supplier + WhatsApp to farmer group', demo: true,
@@ -321,7 +361,7 @@
 
     /* --------------------------- bag returns ------------------------- */
     Store.add('bagReturns', {
-      returnNo: 'BR-0001', returnedBags: 60, good: 51, repairable: 6, replaced: 3, lost: 1,
+      returnNo: 'BR-0001', returnedBags: 60, good: 51, repairable: 6, replaced: 3, lost: 0,
       returnedAt: ago(1, 17), recordedBy: 'chaminda.raj@efpl.org',
       repairOrderRaised: true, replacementOrderQty: 50, replacementOrderedAt: ago(1, 18),
       note: 'Stitching repaired in-house; 50 replacement bags ordered from the supplier.',

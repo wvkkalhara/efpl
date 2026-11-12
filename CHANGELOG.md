@@ -3,6 +3,51 @@
 All notable changes to the EnerFab Biomass Storage system.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.3.0] — 2026-11-12
+
+### Changed
+
+* **Nothing is rejected.** Every load is received. A short fill still drops
+  the batch to the reduced price; anything else (wet, dirty) is handled by a
+  **percentage deduction** the supervisor enters, with a reason, when accepting
+  the load. It can be corrected on the payment until the payment is authorised,
+  and it shows on the receipt, payment slip, supplier statement, reports and CSV.
+  The "Reject" button, the "send back" option and the Rejected filter are gone.
+* **Suggested deduction.** The accept dialog opens with a deduction already
+  proposed from the moisture reading: 5 % for a damp load, 10 % for a wet one
+  (both editable in Business settings; 0 turns it off). The supervisor can
+  change or clear it before accepting.
+* **Moisture formula.** Moisture is read from bag weight as
+  `moisture % = (40 / 18) × kg − 20` (18 kg = 20 %, 36 kg = 60 %). The two
+  points are in Business settings. Bands are now dry / damp / wet (30 % and
+  45 % by default) and a wet reading is a reason to deduct, not to reject.
+* **New look ("weighbridge").** Deep-green sidebar, DIN-style figures, a
+  moisture scale wherever a bag is weighed, bag serials drawn as tags, calmer
+  tables and dialogs, a two-panel sign-in screen. System fonts only, so it
+  still opens offline and passes the Content-Security-Policy.
+
+### Added
+
+* **Language choice.** Each device can show English only, or English with
+  Sinhala alongside (menu, headings, field names, buttons, table headers,
+  statuses). The switch is in the account menu, the phone "More" sheet and on
+  the sign-in screen. Wording lives in one table in `js/i18n.js`.
+
+### Fixed
+
+* Save buttons in dialogs (supplier, farmer, quality issue, bag return, new
+  account) did nothing because the form reader expected a `<form>`.
+* An approved gasifier request had no "Weigh and consume" button.
+* Consuming bags created a second record with the same serial. A bag now keeps
+  one record for life and moves emptied → checked → back to stock / repair /
+  retired under Bag returns.
+* A serial already in a bay could be attached to a second delivery; it is now
+  skipped and reported. More serials than counted bags are refused.
+* Error messages in the acceptance and farmer-declaration dialogs never showed.
+* A supplier marked "also a farmer" listed every farmer in the declaration.
+* Demo data now starts its receipt/payment numbers after the sample records.
+* Bay moisture uses every bag in the bay, not only the latest delivery.
+
 ## [1.2.0] — 2026-11-12
 
 ### Changed

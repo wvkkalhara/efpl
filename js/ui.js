@@ -195,7 +195,7 @@
 
   const empty = (title, hint, action) => `
     <div class="empty-state nm-card">
-      <div class="empty-ico">🌾</div>
+      <div class="empty-ico">${icon('leaf')}</div>
       <h3>${esc(title)}</h3>
       <p class="muted">${esc(hint || '')}</p>
       ${action || ''}
@@ -240,7 +240,9 @@
   /** Reads a <form> into a plain object, trimmed. */
   function formData(form) {
     const out = {};
-    for (const el of Array.from(form.elements)) {
+    // Dialog bodies are plain <div>s, not <form>s, so they have no .elements.
+    const fields = form.elements ? Array.from(form.elements) : Array.from(form.querySelectorAll('input, select, textarea'));
+    for (const el of fields) {
       if (!el.name || el.disabled) continue;
       if (el.type === 'checkbox') out[el.name] = el.checked;
       else if (el.type === 'number') out[el.name] = el.value === '' ? '' : Number(el.value);
@@ -291,6 +293,10 @@
         @page { size: auto; margin: 10mm; }
         *{box-sizing:border-box}
         body{font-family:"Segoe UI",Roboto,Arial,sans-serif;color:#111;margin:0;padding:0;background:#fff}
+        .stats{display:flex;flex-wrap:wrap;gap:4mm;margin-bottom:4mm}
+        .stat{border:1px solid #bbb;padding:2mm 3mm;display:flex;flex-direction:column;font-size:9pt}
+        .stat-value{font-size:13pt}
+        button,.i{display:none}
         .sheet{display:flex;flex-wrap:wrap;gap:6mm}
         .sticker{width:70mm;border:1.2px solid #111;border-radius:3mm;padding:3mm;page-break-inside:avoid}
         .sticker h3{margin:0 0 1mm;font-size:11pt;letter-spacing:.5px}

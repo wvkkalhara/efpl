@@ -95,7 +95,7 @@ carry `node_modules/` and `dist/`. Either:
 git clone https://github.com/<your-account>/efpl-biomass-storage.git
 cd efpl-biomass-storage
 npm install
-npm test          # 74 checks — green before you start
+npm test          # green before you start
 git switch -c bags/fix-duplicate-serial
 # …work…
 git commit -am "bags: refuse a serial that is already stored"

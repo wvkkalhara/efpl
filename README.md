@@ -7,7 +7,7 @@ Built from the 15-point requirements document and the WhatsApp decisions on bag 
 ```bash
 git clone <this repo> && cd efpl-biomass
 npm install        # jsdom, test-only
-npm test           # 74 checks against the real app
+npm test           # smoke test against the real app
 npm run build      # dist/EnerFab-Biomass-Storage.html  ← one file, no server needed
 npm start          # http://localhost:3000  ← the installable PWA
 ```
@@ -33,6 +33,8 @@ No framework and no runtime dependencies — the app is plain HTML, CSS and Java
 | 1 | Supplier and farmer registers, farmers under suppliers | Suppliers · Farmers |
 | 2 | Weighing, bag count, random bag check | Receive biomass |
 | 3 | Fill-check sample → Rs 300 / Rs 270 / recount | Receive biomass step 3 |
+| – | Nothing is rejected: wet or poor loads are received and a % is deducted | Accept & allocate · Payments |
+| – | Moisture from bag weight: % = (40 ÷ 18) × kg − 20 (18 kg = 20 %, 36 kg = 60 %) | Everywhere a bag is weighed · Settings |
 | 4 | Accept, allocate bays, bags per bay | Accept & allocate |
 | 5 | Supervisor approves the bay from bag weight/moisture | Gasifier issue |
 | 6 | Weigh 3 bags at consumption → average → out weight | Weigh & consume |
@@ -79,10 +81,10 @@ Sign-in is Firebase Authentication — Google first, email/password as an altern
 
 ```
 index.html                  the app shell
-css/app.css                 neumorphic design system, EnerFab palette
+css/app.css                 "weighbridge" design system, EnerFab palette, system fonts only
 js/config.js                Firebase project, super-admin email, business defaults
 js/store.js                 local database (localStorage, atomic debounced writes, outbox)
-js/domain.js                business rules: fill check, moisture, payment flow, trace, Code 39
+js/domain.js                business rules: fill check, moisture line, deductions, payment flow, trace, Code 39
 js/firebase.js              tiny Firebase client over fetch (auth + RTDB REST)
 js/auth.js                  sign-in, roles, 90-day device session, PBKDF2 offline credentials
 js/sync.js                  offline-first push/pull, conflict resolution, subscription push
@@ -97,7 +99,7 @@ firebase.rules.json         the database lock — must be published
 firebase.json · .firebaserc hosting + rules deploy settings for efpl-2feb8
 server.js                   optional static server for LAN/tablet use
 build.js                    bundles everything into dist/
-tests/smoke-test.js         74 automated checks against the real app
+tests/smoke-test.js         automated checks against the real app
 docs/                       requirements review · bag tagging SOP · research · deployment · GitHub setup
 
 .github/workflows/ci.yml    syntax check → JSON check → tests → build → artefact
@@ -123,9 +125,9 @@ npm test
 CI runs the same command on every push (`.github/workflows/ci.yml`), together
 with a syntax check of every source file, JSON validation and a build.
 
-The suite boots `index.html` in jsdom, seeds the demo history, signs in, walks all 14 routes, then drives real flows: it accepts a waiting truck (allocation, serial capture, auto payment, audit entry), approves and consumes a gasifier issue, verifies the Rs 300 / Rs 270 rule, checks that a serial traces to supplier + farmer + receipt, and confirms the subscription gate hides the app from staff but not from the owner.
+The suite boots `index.html` in jsdom, seeds the demo history, signs in, walks all 14 routes, then drives real flows: it accepts a waiting truck with a 5 % deduction (allocation, serial capture, auto payment, audit entry), approves and consumes a gasifier issue, verifies the Rs 300 / Rs 270 rule and the moisture formula, checks that a serial traces to supplier + farmer + receipt, and confirms the subscription gate hides the app from staff but not from the owner.
 
-Current result: **74 passed, 0 failed.**
+Run it after every change. (The v1.3.0 changes were verified by driving the same flows in a browser; run `npm test` once on a machine with Node.js to confirm the suite itself.)
 
 ---
 
@@ -133,7 +135,7 @@ Current result: **74 passed, 0 failed.**
 
 1. Publish `firebase.rules.json` in the Firebase console (Realtime Database → Rules).
 2. Make sure your web address is listed in Firebase → Authentication → Settings → **Authorized domains** (Firebase Hosting domains and `localhost` already are).
-3. **Administration → Business settings**: confirm Rs 300 / Rs 270 / 90 % / 20 kg with the signed supplier agreement.
+3. **Administration → Business settings**: confirm Rs 300 / Rs 270 / 90 % and the moisture line (18 kg = 20 %, 36 kg = 60 %) with the signed supplier agreement.
 4. Create the real bays in **Bays & stock** (the live app starts empty; sample data lives only in the sandboxed demo). Optionally set `allowLocalPreview: false` to hide the demo button.
 5. Number the bags, print the labels, issue round 1, receive the first truck.
 

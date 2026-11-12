@@ -196,7 +196,7 @@
             <img class="topbar-logo" src="assets/enerfab-logo.png" alt="" />
             <div class="topbar-title">
               <h1 id="page-title"></h1>
-              <span class="crumb">${esc(Store.settings().siteName)} · ${esc(Store.settings().siteLocation)}</span>
+              <span class="crumb">${esc(Store.settings().siteName)}, ${esc(Store.settings().siteLocation)}</span>
             </div>
             <div class="topbar-actions">
               <button class="sync-chip" id="sync-chip" title="Cloud sync status">
@@ -212,6 +212,7 @@
                 </button>
                 <div class="dropdown" id="user-dropdown" role="menu" hidden>
                   <div class="dropdown-head">${esc(user.email)}</div>
+                  ${window.I18n ? window.I18n.switchHtml() : ''}
                   <button data-menu="settings">${ico('settings')} Settings</button>
                   <button data-menu="backup">${ico('download')} Backup data</button>
                   <button data-menu="logout" class="danger-text">${ico('logout')} Sign out</button>
@@ -227,8 +228,8 @@
             <span><b>Limited storage:</b> this window cannot save to the device, so changes last only until it is closed.</span></div>` : ''}
           <main id="view" class="view" tabindex="-1"></main>
           <footer class="app-foot">
-            <span>EnerFab (Pvt) Ltd · Green Engineering</span>
-            <span>Works offline · syncs automatically when online</span>
+            <span>EnerFab (Pvt) Ltd, Green Engineering</span>
+            <span>Works offline and syncs when there is a connection</span>
           </footer>
         </div>
 
@@ -305,13 +306,28 @@
     /* ---------------------------- sign in ---------------------------- */
     loginScreen() {
       return `
-      <div class="auth-wrap">
+      <div class="auth-wrap split">
+        <aside class="auth-side">
+          <div class="brand">
+            <img class="brand-logo" src="assets/enerfab-logo.png" alt="" />
+            <div class="brand-text"><strong>EnerFab</strong><span>Green Engineering</span></div>
+          </div>
+          <div>
+            <h1>Every bag, from the farmer to the gasifier.</h1>
+            <p>Weigh the truck, check the fill, store by bay, feed the gasifier and pay the supplier. One bag serial ties it all together.</p>
+          </div>
+          <ul class="auth-facts">
+            <li><b>Rs ${esc(CFG.defaults.unitPrice)}</b>per full bag</li>
+            <li><b>${esc(CFG.defaults.fillThresholdPct)}%</b>fill agreement</li>
+            <li><b>Offline</b>works with no signal</li>
+          </ul>
+        </aside>
+        <div class="auth-main">
         <div class="auth-card nm-card">
           <div class="auth-brand">
-            <img src="assets/enerfab-logo.png" alt="" class="auth-logo" />
             <div>
-              <h1>Biomass Storage</h1>
-              <p class="muted">EnerFab (Pvt) Ltd · Green Engineering</p>
+              <h1>Sign in</h1>
+              <p class="muted">Biomass Storage, ${esc(Store.settings().siteLocation || 'EnerFab')}</p>
             </div>
           </div>
 
@@ -334,7 +350,6 @@
             <button class="nm-btn primary block" type="submit">Sign in</button>
             <div class="auth-links">
               <button type="button" class="link" id="forgot">Forgot password</button>
-              <span class="dot-sep">·</span>
               ${CFG.allowSelfRegistration ? '<button type="button" class="link" id="create-account">Create an account</button>' : ''}
             </div>
             ${CFG.allowLocalPreview ? `<div class="preview-row">
@@ -343,7 +358,9 @@
             </div>` : ''}
           </form>
         </div>
-        <p class="auth-foot">© EnerFab (Pvt) Ltd · No. 115/3 Rampart Road, Sri Jayawardanapura Kotte</p>
+        ${window.I18n ? window.I18n.switchHtml() : ''}
+        <p class="auth-foot">EnerFab (Pvt) Ltd, No. 115/3 Rampart Road, Sri Jayawardanapura Kotte</p>
+        </div>
       </div>`;
     },
 
@@ -593,6 +610,7 @@
           </div>
           ${groups}
           <div class="more-actions">
+            ${window.I18n ? window.I18n.switchHtml() : ''}
             <button class="nm-btn block" data-act="backup">${ico('download')} Backup data</button>
             <button class="nm-btn block danger-ghost" data-act="logout">${ico('logout')} Sign out</button>
           </div>`,

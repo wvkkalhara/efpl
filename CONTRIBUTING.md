@@ -9,7 +9,7 @@ with no build step and no internet.
 
 ```bash
 npm install        # jsdom, for the tests only
-npm test           # 74 checks: boots the real app in a DOM and drives the flows
+npm test           # boots the real app in a DOM and drives the flows
 npm run build      # produces dist/EnerFab-Biomass-Storage.html (one portable file)
 npm start          # http://localhost:3000 (needed for service-worker/offline testing)
 ```

@@ -62,6 +62,8 @@
     'capacityBags', 'count', 'roundNo', 'sampleSizePct', 'minSampleSize', 'standardDryBagKg',
     'fillThresholdPct', 'replacementOrderQty', 'landAcres', 'fillPct', 'kg', 'weightKg', 'qty',
     'quantity', 'bagsIssued', 'bagsReturned', 'damaged', 'tries', 'n',
+    'deductionPct', 'deductionAmount', 'payableAmount', 'moistureCalKg1', 'moistureCalPct1',
+    'moistureCalKg2', 'moistureCalPct2', 'moistureWarnPct', 'moistureHighPct', 'deductDampPct', 'deductWetPct',
   ]);
   const HTML_CHARS = /[<>"`]/g;
   function clean(value, key) {

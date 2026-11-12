@@ -18,9 +18,9 @@ What *is* "too much" is only the part that has no written agreement behind it. T
 |---|---|---|
 | A | The exact fill-check rule (sample size, measuring drum, who measures, what happens at 89 % vs 91 %) | This number changes what a supplier is paid. It must be defensible in a dispute. |
 | B | Who signs the farmer declaration and when (supplier at the gate, or supplier before payment release) | Requirement 10 makes the payment conditional on it; somebody has to own the truth of that list. |
-| C | Moisture policy — is bag weight the accepted proxy, and what are the warning/reject limits | Requirements 5 and 6 depend on it; without numbers, "wet biomass" is an argument, not a rule. |
+| C | Moisture policy — bag weight is the accepted measure (moisture % = 40/18 × kg − 20); what are the damp/wet limits and the deduction for each | Requirements 5 and 6 depend on it; without numbers, "wet biomass" is an argument, not a rule. |
 
-The app is built with defaults for all three (90 % / Rs 300 → Rs 270 · declaration before release · 25 % warn, 45 % reject) and **every one of them is editable in Administration → Business settings**, so a decision tomorrow is a settings change, not a code change.
+The app is built with defaults for all three (90 % / Rs 300 → Rs 270 · declaration before release · 30 % damp, 45 % wet; wet loads are received with a % deduction, never rejected) and **every one of them is editable in Administration → Business settings**, so a decision tomorrow is a settings change, not a code change.
 
 ---
 
@@ -43,8 +43,8 @@ The app samples the agreed percentage of bags (default 5 %, minimum 3), records 
 |---|---|---|
 | ≥ 100 % | Pass | Rs 300 |
 | 90 – 99 % | Pass (marginal, noted) | Rs 300 |
-| 70 – 89 % | Reduced **or** send back for re-filling and recount | Rs 270 |
-| < 70 % | Recount / reject | Rs 270 or rejected |
+| below 90 % | Reduced price for the whole batch, **or** the supplier re-fills and the bags are counted and sampled again | Rs 270 |
+| any load | Never rejected. Wet or poor biomass is received and the supervisor deducts a % at acceptance | % off the batch value |
 
 A supervisor can override to full price, but only with a written reason, and every override is written to the audit trail.
 
@@ -155,7 +155,7 @@ These are not in the fifteen points but will be asked for within a month of go-l
 | **Price history** | Disputes are about "the rate at the time" | ⚠ Today the price is frozen on each payment; a full rate-history table is a Phase 2 item |
 | **Bag cost** | Bags are an asset; loss is real money | ⚠ Counted, not yet valued |
 | **Night shift / two operators** | Who consumed what | ✅ Each issue records its operator |
-| **Reject and recount loop** | Rejected trucks need a re-entry record | ✅ Delivery can be rejected with a reason and re-registered |
+| **Deduction instead of rejection** | Loads are never turned away | ✅ Supervisor enters a % and a reason at acceptance; it prints on the receipt and payment slip |
 | **Moisture meter readings** | Replaces the weight proxy | ⚠ Field exists for weight only; meter field is Phase 2 |
 | **Data protection (Sri Lanka PDPA)** | Farmers' NIC and phone are personal data | ✅ See security document; no NIC is shown to operators |
 
@@ -165,7 +165,7 @@ These are not in the fifteen points but will be asked for within a month of go-l
 
 1. **Fill rule:** is the whole batch paid at Rs 270 when the average is 70–89 %, or only the under-filled bags? *(Currently: whole batch.)*
 2. **Farmer declaration:** must it be complete before *this* payment is released, or before the *next* delivery is accepted?
-3. **Moisture:** do we accept bag weight as the official proxy until a meter is bought, and are 25 % / 45 % the right warning and reject limits?
+3. **Moisture:** do we accept bag weight as the official proxy until a meter is bought, and are 30 % / 45 % the right damp and wet limits, and what % is deducted at each?
 4. **Multiple suppliers per farmer:** allowed or not?
 5. **Weighbridge:** is the reading typed by hand, or does the indicator have an output we can read directly?
 6. **Who measures the fill check** — store keeper, supervisor, or both? (The app records whoever is signed in.)
@@ -194,4 +194,4 @@ These are not in the fifteen points but will be asked for within a month of go-l
 | 14 | Bag returns | good / repaired / replaced |
 | 15 | Reports (CSV + print) | — |
 
-Everything in this table is implemented and covered by the 74 automated checks in `tests/smoke-test.js`.
+Everything in this table is implemented and covered by the automated checks in `tests/smoke-test.js`.

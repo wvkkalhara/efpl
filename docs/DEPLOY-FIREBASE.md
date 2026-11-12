@@ -104,7 +104,7 @@ Send `dist/EnerFab-Biomass-Storage.html`. Double-click. It runs with no server a
 
 1. Open the app → **Continue with Google** as `w.v.k.kalhara@gmail.com` (or use *Preview with demo data* to look around first).
 2. **Administration → Data & sync → Remove demo data** to clear the sample history.
-3. **Administration → Business settings**: set the real unit price (Rs 300), reduced price (Rs 270), fill agreement (90 %), sample size (5 %), dry bag reference (20 kg), site name.
+3. **Administration → Business settings**: set the real unit price (Rs 300), reduced price (Rs 270), fill agreement (90 %), sample size (5 %), moisture line (18 kg = 20 %, 36 kg = 60 %), site name.
 4. **Suppliers → Add supplier**, then add their farmers.
 5. **Bag registry → Number new bags** (e.g. 5 000) → **Print labels** → fix to bags.
 6. **Issue to supplier** for the first round → print the allocation slip.

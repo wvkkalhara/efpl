@@ -37,7 +37,7 @@ jobs:
             node -e "JSON.parse(require('fs').readFileSync('$f','utf8'))" && echo "ok $f"
           done
 
-      - name: Run the smoke test (74 checks against the real app)
+      - name: Run the smoke test against the real app
         run: npm test
 
       - name: Build the single-file bundle

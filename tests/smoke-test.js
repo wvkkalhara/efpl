@@ -31,7 +31,7 @@ vc.on('error', (...a) => console.error('page error:', ...a));
 
 const SCRIPTS = [
   'js/config.js', 'js/store.js', 'js/domain.js', 'js/firebase.js', 'js/auth.js',
-  'js/sync.js', 'js/ui.js', 'js/seed.js', 'js/app.js',
+  'js/sync.js', 'js/ui.js', 'js/i18n.js', 'js/seed.js', 'js/app.js',
   'js/views-core.js', 'js/views-stock.js', 'js/views-money.js',
 ];
 
@@ -115,9 +115,13 @@ function run() {
     const r = Domain.evaluateFillCheck({ bagCount: 180, fills: [82, 85, 86, 83, 84, 87], settings: s });
     return r.unitPrice === 270 && r.amount === 48600 && r.decision === 'REDUCED_PRICE';
   });
-  check('very low fill asks for a recount', () => {
+  check('a very low fill is still received, at the reduced price', () => {
     const r = Domain.evaluateFillCheck({ bagCount: 10, fills: [60, 58], settings: s });
-    return r.decision === 'RECOUNT_REQUIRED';
+    return r.decision === 'REDUCED_PRICE' && r.unitPrice === 270 && r.amount === 2700;
+  });
+  check('there is no reject outcome any more', () => {
+    const r = Domain.evaluateFillCheck({ bagCount: 10, fills: [60], settings: s, outcome: 'REJECT' });
+    return r.decision !== 'REJECTED' && !Domain.PERMISSIONS.admin.includes('delivery.reject');
   });
   check('supervisor override is honoured', () => {
     const r = Domain.evaluateFillCheck({ bagCount: 10, fills: [84], settings: s, outcome: 'OVERRIDE_FULL_PRICE' });
@@ -131,8 +135,38 @@ function run() {
   check('net weight = gross - tare', () => Domain.weighTruck(8120, 1860).netKg === 6260);
   check('gross lighter than tare is refused', () => Domain.weighTruck(1000, 2000).ok === false);
   check('average bag weight', () => Domain.avgBagWeight(6260, 300) === 20.87);
-  check('moisture estimate from bag weight', () => Domain.moistureFromWeight(25, s) === 20);
-  check('moisture band warns at 25%', () => Domain.moistureBand(26, s) === 'WARN');
+  check('moisture formula: 36 kg bag = 60%', () => Domain.moistureFromWeight(36, s) === 60);
+  check('moisture formula: 18 kg bag = 20%', () => Domain.moistureFromWeight(18, s) === 20);
+  check('moisture formula: y = 40/18 x - 20 in between (27 kg = 40%)', () => Domain.moistureFromWeight(27, s) === 40);
+  check('moisture never goes below zero for a very light bag', () => Domain.moistureFromWeight(5, s) === 0);
+  check('the line can be re-calibrated from settings', () => {
+    const custom = Object.assign({}, s, { moistureCalKg1: 20, moistureCalPct1: 10, moistureCalKg2: 40, moistureCalPct2: 50 });
+    return Domain.moistureFromWeight(30, custom) === 30 && Domain.weightForMoisture(60, s) === 36;
+  });
+  check('moisture bands: dry, damp, wet (never "reject")', () => {
+    return Domain.moistureBand(20, s) === 'OK' && Domain.moistureBand(31, s) === 'WARN' && Domain.moistureBand(60, s) === 'HIGH';
+  });
+
+  results.push('\nDEDUCTIONS (nothing is rejected)');
+  check('10% off 160 bags at Rs 300 leaves Rs 43,200', () => {
+    const m = Domain.applyDeduction(160, 300, 10);
+    return m.grossAmount === 48000 && m.deductions === 4800 && m.netAmount === 43200;
+  });
+  check('no deduction leaves the batch value untouched', () => Domain.applyDeduction(100, 270, 0).netAmount === 27000);
+  check('a deduction is clamped to 0-100%', () => Domain.applyDeduction(10, 300, 250).netAmount === 0 && Domain.applyDeduction(10, 300, -5).netAmount === 3000);
+  check('the wet demo load was received with a deduction, not rejected', () => {
+    const d = Store.all('deliveries').find((x) => x.receiptNo === 'RC-2026-0005');
+    const p = Store.all('payments').find((x) => x.deliveryId === d.id);
+    return d.status === 'ACCEPTED' && d.deductionPct === 10 && p.netAmount === 43200 && p.deductions === 4800;
+  });
+  check('suggested deduction: none when dry, 5% damp, 10% wet', () => {
+    return Domain.suggestedDeduction(20, s).pct === 0 && Domain.suggestedDeduction(35, s).pct === 5
+      && Domain.suggestedDeduction(60, s).pct === 10 && Domain.suggestedDeduction(null, s).pct === 0;
+  });
+  check('suggestions can be switched off in settings', () => {
+    return Domain.suggestedDeduction(60, Object.assign({}, s, { deductWetPct: 0, deductDampPct: 0 })).pct === 0;
+  });
+  check('no delivery in the demo is rejected', () => !Store.all('deliveries').some((d) => d.status === 'REJECTED'));
 
   results.push('\nBAG SERIALS (the WhatsApp decision)');
   check('parses a hyphenated range', () => {
@@ -202,13 +236,39 @@ function run() {
   inputs[0].value = String(pending.bagCount);
   inputs[0].dispatchEvent(new window.Event('input', { bubbles: true }));
   // give the truck serials that are in the registry but still in stock
-  const freeSerials = Store.all('bags').filter((b) => b.status === 'IN_STOCK').slice(0, pending.bagCount).map((b) => b.serial);
+  // (one short, so a serial that is already sitting in BAY-1 can be scanned by mistake)
+  const freeSerials = Store.all('bags').filter((b) => b.status === 'IN_STOCK').slice(0, pending.bagCount - 1).map((b) => b.serial);
   const serialBox = window.document.querySelector('[name=serials]');
-  serialBox.value = freeSerials.join(' ');
+  serialBox.value = freeSerials.join(' ') + ' EFPL-BG-000100';
   const paymentsBefore = Store.all('payments').length;
+  // the supervisor takes 5% off this load instead of sending it back
+  const pctBox = window.document.querySelector('[name=deductionPct]');
+  check('a damp load opens with the suggested deduction and reason filled in', () => {
+    return pctBox.value === '5' && /Damp load/.test(window.document.querySelector('[name=deductionReason]').value);
+  });
+  window.document.querySelector('[name=deductionReason]').value = '';
+  pctBox.value = '5';
+  pctBox.dispatchEvent(new window.Event('input', { bubbles: true }));
+  window.document.querySelector('[data-act=accept]').click();
+  check('a deduction without a reason is refused', () => Store.byId('deliveries', pending.id).status === 'AWAITING_ACCEPTANCE');
+  window.document.querySelector('[name=deductionReason]').value = 'Damp load';
   window.document.querySelector('[data-act=accept]').click();
   check('delivery flips to ACCEPTED', () => Store.byId('deliveries', pending.id).status === 'ACCEPTED');
   check('a payment is generated automatically', () => Store.all('payments').length === paymentsBefore + 1);
+  check('the payment carries the 5% deduction', () => {
+    const p = Store.all('payments').find((x) => x.deliveryId === pending.id);
+    const gross = pending.bagCount * p.unitPrice;
+    return p.deductionPct === 5 && p.grossAmount === gross && p.deductions === gross * 0.05 && p.netAmount === gross * 0.95
+      && p.deductionReason === 'Damp load' && Store.byId('deliveries', pending.id).payableAmount === p.netAmount;
+  });
+  check('new payment numbers do not collide with existing ones', () => {
+    const nos = Store.all('payments').map((p) => p.paymentNo);
+    return new Set(nos).size === nos.length;
+  });
+  check('a serial already in a bay is not taken a second time', () => {
+    const stored = Store.all('bags').filter((b) => b.serial === 'EFPL-BG-000100');
+    return stored.length === 1 && stored[0].deliveryId !== pending.id;
+  });
   check('captured serials became stored bags in the bay', () => {
     const stored = Store.all('bags').filter((b) => b.deliveryId === pending.id && b.status === 'STORED');
     return stored.length === Math.min(pending.bagCount, freeSerials.length);
@@ -237,7 +297,15 @@ function run() {
   const after = Store.byId('usageRequests', useReq.id);
   check('consumption records the three-bag average', () => after.status === 'CONSUMED' && after.avgBagKg > 22 && after.avgBagKg < 23);
   check('outgoing weight = average x bags', () => after.totalKg === Math.round(after.avgBagKg * after.bags * 100) / 100);
-  check('consumed bags leave the bay', () => Store.all('bags').filter((b) => b.usageId === useReq.id).every((b) => b.status === 'CONSUMED'));
+  check('consumed bags leave the bay', () => {
+    const used = Store.all('bags').filter((b) => b.usageId === useReq.id);
+    return used.length === after.bags && used.every((b) => b.status === 'CONSUMED');
+  });
+  check('moisture at consumption follows the site formula', () => after.moisturePct === Domain.moistureFromWeight(after.avgBagKg, Store.settings()));
+  check('consuming does not create duplicate bag serials', () => {
+    const serials = Store.all('bags').map((b) => b.serial);
+    return new Set(serials).size === serials.length && serials.length === 1200;
+  });
 
   results.push('\nSECURITY');
   check('suspended state hides the app from ordinary staff', () => {

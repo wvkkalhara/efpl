@@ -9,6 +9,18 @@
 
   const supplierName = (id) => (Store.byId('suppliers', id) || {}).name || '—';
 
+  /** Average arrival weight per bag for the bags now in a bay (weighted by bag). */
+  function bayAvgKg(bags) {
+    let sum = 0, n = 0;
+    const cache = {};
+    for (const b of bags) {
+      if (!b.deliveryId) continue;
+      if (!(b.deliveryId in cache)) cache[b.deliveryId] = (Store.byId('deliveries', b.deliveryId) || {}).avgBagKg || null;
+      if (cache[b.deliveryId]) { sum += cache[b.deliveryId]; n++; }
+    }
+    return n ? D.round2(sum / n) : null;
+  }
+
   /* ============================ BAG REGISTRY ========================= */
   App.register('bags', {
     title: 'Bag registry',
@@ -23,7 +35,7 @@
           ${UI.stat('Numbered bags in store', (counts.IN_STOCK || 0).toLocaleString(), 'ready to issue')}
           ${UI.stat('With suppliers', (counts.ISSUED || 0).toLocaleString(), 'out on a filling round', counts.ISSUED ? 'warn' : null)}
           ${UI.stat('In bays', (counts.STORED || 0).toLocaleString(), 'filled and stored')}
-          ${UI.stat('Consumed / returned', `${((counts.CONSUMED || 0) + (counts.RETURNED || 0)).toLocaleString()}`, `${counts.DAMAGED || 0} damaged`, counts.DAMAGED ? 'warn' : null)}
+          ${UI.stat('Emptied, awaiting check', `${((counts.CONSUMED || 0) + (counts.RETURNED || 0)).toLocaleString()}`, `${counts.DAMAGED || 0} damaged`, counts.DAMAGED ? 'warn' : null)}
         </section>
 
         <div class="toolbar">
@@ -36,7 +48,7 @@
           </div>
           <div class="toolbar-right">
             ${Auth.can('bag.generate') ? '<button class="nm-btn" id="gen-bags"><i class="i i-plus"></i>Number new bags</button>' : ''}
-            ${Auth.can('bag.issue') ? '<button class="nm-btn primary" id="issue-bags">→ Issue to supplier</button>' : ''}
+            ${Auth.can('bag.issue') ? '<button class="nm-btn primary" id="issue-bags">Issue to supplier</button>' : ''}
           </div>
         </div>
         <div id="bag-table"></div>
@@ -225,7 +237,7 @@
 
       view.innerHTML = `
         <div class="toolbar">
-          <p class="muted">Stock is counted from the bag serials stored against each bay, so it corrects itself every time a bag moves.</p>
+          <p class="muted">Stock is counted from the bag serials in each bay, so it updates every time a bag moves.</p>
           <div class="toolbar-right">${Auth.can('bay.allocate') ? '<button class="nm-btn" id="add-bay"><i class="i i-plus"></i>Add bay</button>' : ''}</div>
         </div>
         <div class="bay-grid">
@@ -238,11 +250,13 @@
               byType[t] = (byType[t] || 0) + 1;
             }
             const oldest = bags.slice().sort((a, b) => Date.parse(a.deliveredAt || 0) - Date.parse(b.deliveredAt || 0))[0];
+            const avgKg = bayAvgKg(bags);
             return `<div class="nm-card pad bay-card">
               <div class="bay-head"><div><h3>${esc(bay.code)}</h3><span class="muted small">${esc(bay.name || '')}</span></div>
                 ${badge(`${bags.length.toLocaleString()} bags`, bags.length ? 'ok' : 'muted')}</div>
               <div class="meter big"><span style="width:${pctFull}%"></span></div>
-              <p class="muted small">${pctFull}% of ${(bay.capacityBags || 0).toLocaleString()} bag capacity${oldest ? ` · oldest ${dOnly(oldest.deliveredAt)}` : ''}</p>
+              <p class="muted small">${pctFull}% of ${(bay.capacityBags || 0).toLocaleString()} bag capacity${oldest && oldest.deliveredAt ? `, oldest from ${dOnly(oldest.deliveredAt)}` : ''}</p>
+              ${avgKg ? `<p class="small">${VH.moistureBadge(D.moistureFromWeight(avgKg, s))} <span class="muted">at ${avgKg} kg per bag on arrival</span></p>` : ''}
               <div class="chips">${Object.entries(byType).map(([t, n]) => `<span class="chip">${esc(((CFG.biomassTypes.find((x) => x.id === t) || {}).label) || t)} · ${n}</span>`).join('') || '<span class="muted small">Empty</span>'}</div>
               <div class="bay-actions">
                 ${Auth.can('usage.request') ? `<button class="nm-btn tiny" data-issue="${bay.id}" ${bags.length ? '' : 'disabled'}><i class="i i-flame"></i>Request issue</button>` : ''}
@@ -273,13 +287,32 @@
 
       const addBay = view.querySelector('#add-bay');
       if (addBay) addBay.addEventListener('click', () => {
-        const code = window.prompt('Bay code (for example BAY-7)', `BAY-${bays.length + 1}`);
-        if (!code) return;
-        const cap = Number(window.prompt('Capacity in bags', '600')) || 600;
-        Store.add('bays', { code: code.toUpperCase(), name: code, capacityBags: cap }, 'bay-create');
-        VH.audit('bay.create', 'bay', code, `Capacity ${cap} bags`);
-        UI.toast('Bay added', 'ok');
-        App.refresh();
+        UI.modal({
+          title: 'Add a bay',
+          size: 'sm',
+          body: `<div class="form-errors" role="alert"></div>
+            ${UI.field('Bay code', UI.input('code', { value: `BAY-${bays.length + 1}`, required: true }))}
+            ${UI.field('Name', UI.input('name', { value: `Bay ${bays.length + 1}` }))}
+            ${UI.field('Capacity (bags)', UI.input('capacityBags', { type: 'number', min: 1, value: 600, required: true }))}`,
+          footer: '<button class="nm-btn" data-close>Cancel</button><button class="nm-btn primary" data-act="save">Add bay</button>',
+          onMount(el, close) {
+            el.querySelector('[data-act=save]').addEventListener('click', () => {
+              const f = UI.formData(el.querySelector('.modal-body'));
+              const code = String(f.code || '').toUpperCase().replace(/[^A-Z0-9-]/g, '');
+              const cap = Number(f.capacityBags) || 0;
+              const errors = [];
+              if (!code) errors.push('Enter a bay code');
+              if (bays.some((b) => b.code === code)) errors.push(`${code} already exists`);
+              if (cap < 1) errors.push('Enter the capacity in bags');
+              UI.showErrors(el, errors);
+              if (errors.length) return;
+              Store.add('bays', { code, name: f.name || code, capacityBags: cap }, 'bay-create');
+              VH.audit('bay.create', 'bay', code, `Capacity ${cap} bags`);
+              UI.toast('Bay added', 'ok');
+              close(); App.refresh();
+            });
+          },
+        });
       });
     },
   });
@@ -290,41 +323,41 @@
     render(view) {
       const s = Store.settings();
       const requests = Store.all('usageRequests').slice().sort((a, b) => Date.parse(b.requestedAt) - Date.parse(a.requestedAt));
-      const pending = requests.filter((r) => r.status === 'PENDING');
+      const open = requests.filter((r) => r.status === 'PENDING' || r.status === 'APPROVED');
       const bays = Store.where('bays', (b) => !b.deleted).map((b) => {
         const bags = Store.where('bags', (x) => x.bayId === b.id && x.status === 'STORED');
-        const latestDelivery = bags.length ? Store.byId('deliveries', bags[bags.length - 1].deliveryId) : null;
-        return { bay: b, count: bags.length, avgKg: latestDelivery ? latestDelivery.avgBagKg : null };
+        return { bay: b, count: bags.length, avgKg: bayAvgKg(bags) };
       });
 
       view.innerHTML = `
         <section class="nm-card pad">
-          <div class="card-head"><h3>Bay selection — check the bag weight first</h3>
+          <div class="card-head"><h3>Which bay to draw from</h3>
             ${Auth.can('usage.request') ? '<button class="nm-btn primary" id="new-usage"><i class="i i-plus"></i>New issue request</button>' : ''}</div>
-          <p class="muted">Requirement 5: the supervisor picks the bay after weighing a bag, because bag weight tells us the moisture level. Wetter biomass is left to dry or mixed with a drier bay.</p>
+          <p class="muted">The supervisor picks the bay after weighing a bag: the heavier the bag, the wetter the biomass. Wet stock is left to dry or mixed with a drier bay.</p>
           <div class="bay-grid tight">
             ${bays.map(({ bay, count, avgKg }) => {
               const moisture = avgKg ? D.moistureFromWeight(avgKg, s) : null;
               const band = D.moistureBand(moisture, s);
               return `<div class="nm-inset pad-sm bay-mini">
                 <div class="bay-head"><b>${esc(bay.code)}</b>${badge(`${count} bags`, count ? 'ok' : 'muted')}</div>
-                <div class="bay-mini-row"><span class="muted small">Avg bag</span><b>${avgKg ? `${avgKg} kg` : '—'}</b></div>
-                <div class="bay-mini-row"><span class="muted small">Moisture</span><b class="t-${band === 'OK' ? 'ok' : band === 'WARN' ? 'warn' : band === 'REJECT' ? 'danger' : 'muted'}">${moisture === null ? '—' : `${moisture}%`}</b></div>
+                <div class="bay-mini-row"><span class="muted small">Average bag</span><b>${avgKg ? `${avgKg} kg` : '—'}</b></div>
+                <div class="bay-mini-row"><span class="muted small">Moisture</span><b class="t-${D.moistureTone(band)}">${moisture === null ? '—' : `${moisture}% · ${D.MOISTURE_LABEL[band]}`}</b></div>
               </div>`;
             }).join('')}
           </div>
         </section>
 
-        ${pending.length ? `<section class="nm-card pad">
-          <h3>Waiting for approval (${pending.length})</h3>
-          <div class="request-list">${pending.map((r) => `
+        ${open.length ? `<section class="nm-card pad">
+          <h3>Open requests (${open.length})</h3>
+          <div class="request-list">${open.map((r) => `
             <div class="request-row">
-              <div><b>${esc(r.requestNo)}</b> · ${esc(r.bayCode)} · ${r.bags} bags
-                <div class="muted small">requested by ${esc(r.requestedBy)} · ${esc(dt(r.requestedAt))}</div>
-                ${r.note ? `<div class="small">“${esc(r.note)}”</div>` : ''}</div>
+              <div><b>${esc(r.requestNo)}</b>, ${esc(r.bayCode)}, ${r.bags} bags ${badge(r.status === 'PENDING' ? 'Waiting for the supervisor' : 'Approved, ready to weigh', r.status === 'PENDING' ? 'warn' : 'ok')}
+                <div class="muted small">requested by ${esc(r.requestedBy)}, ${esc(dt(r.requestedAt))}</div>
+                ${r.note ? `<div class="small">“${esc(r.note)}”</div>` : ''}
+                ${r.approvedNote ? `<div class="small">Supervisor: ${esc(r.approvedNote)}</div>` : ''}</div>
               <div class="request-actions">
-                ${Auth.can('usage.approve') ? `<button class="nm-btn tiny primary" data-approve="${r.id}">Approve &amp; choose bay</button>` : ''}
-                ${Auth.can('usage.consume') ? `<button class="nm-btn tiny" data-consume="${r.id}">Weigh &amp; consume</button>` : ''}
+                ${r.status === 'PENDING' && Auth.can('usage.approve') ? `<button class="nm-btn tiny primary" data-approve="${r.id}">Approve and choose bay</button>` : ''}
+                ${r.status === 'APPROVED' && Auth.can('usage.consume') ? `<button class="nm-btn tiny primary" data-consume="${r.id}">Weigh and consume</button>` : ''}
               </div>
             </div>`).join('')}</div>
         </section>` : ''}
@@ -332,7 +365,7 @@
         <section class="nm-card pad">
           <h3>Issue history</h3>
           ${UI.table({
-            rows: requests.filter((r) => r.status !== 'PENDING').slice(0, 40),
+            rows: requests.filter((r) => r.status === 'CONSUMED').slice(0, 40),
             empty: 'Nothing issued to the gasifier yet.',
             rowKey: (r) => r.id,
             columns: [
@@ -341,9 +374,8 @@
               { label: 'Bags', cls: 'num', render: (r) => r.bags },
               { label: 'Sample weights', render: (r) => esc((r.sampleBags || []).join(' / ') || '—') },
               { label: 'Avg bag', cls: 'num', render: (r) => (r.avgBagKg ? `${r.avgBagKg} kg` : '—') },
-              { label: 'Moisture', render: (r) => { const b = D.moistureBand(r.moisturePct, s); return r.moisturePct === undefined || r.moisturePct === null ? '—' : badge(`${r.moisturePct}%`, b === 'OK' ? 'ok' : b === 'WARN' ? 'warn' : 'danger'); } },
+              { label: 'Moisture', render: (r) => VH.moistureBadge(r.avgBagKg ? D.moistureFromWeight(r.avgBagKg, s) : null) },
               { label: 'Out weight', cls: 'num', render: (r) => (r.totalKg ? kg(r.totalKg) : '—') },
-              { label: 'Status', render: (r) => badge(r.status, UI.statusTone(r.status)) },
             ],
           })}
         </section>`;
@@ -394,8 +426,7 @@
     const bays = Store.where('bays', (b) => !b.deleted).map((b) => {
       const count = VH.bagsInBay(b.id);
       const bags = Store.where('bags', (x) => x.bayId === b.id && x.status === 'STORED');
-      const latest = bags.length ? Store.byId('deliveries', bags[bags.length - 1].deliveryId) : null;
-      const avg = latest ? latest.avgBagKg : null;
+      const avg = bayAvgKg(bags);
       return { bay: b, count, avg, moisture: avg ? D.moistureFromWeight(avg, s) : null };
     });
 
@@ -412,14 +443,21 @@
               <td><b>${esc(b.bay.code)}</b></td>
               <td class="num">${b.count}</td>
               <td class="num">${b.avg ? `${b.avg} kg` : '—'}</td>
-              <td>${b.moisture === null ? '—' : badge(`${b.moisture}%`, band === 'OK' ? 'ok' : band === 'WARN' ? 'warn' : 'danger')}</td>
+              <td data-moist="${b.bay.id}">${VH.moistureBadge(b.moisture)}</td>
               <td><input class="nm-input tiny-input" type="number" step="0.01" min="0" data-test="${b.bay.id}" placeholder="kg" /></td>
             </tr>`;
           }).join('')}</tbody></table>
         </div>
+        <p class="small muted">Type a test bag weight and the moisture for that bay updates from it (18 kg is 20%, 36 kg is 60%).</p>
         ${UI.field('Supervisor note', UI.textarea('note', { rows: 2, placeholder: 'Bay 1 is drier; mix 1:2 with Bay 4…' }))}`,
       footer: '<button class="nm-btn" data-close>Cancel</button><button class="nm-btn primary" data-act="ok">Approve</button>',
       onMount(el, close) {
+        UI.$$('[data-test]', el).forEach((inp) => inp.addEventListener('input', () => {
+          const b = bays.find((x) => x.bay.id === inp.dataset.test);
+          const w = Number(inp.value);
+          const cell = el.querySelector(`[data-moist="${inp.dataset.test}"]`);
+          if (cell) cell.innerHTML = VH.moistureBadge(w > 0 ? D.moistureFromWeight(w, s) : (b ? b.moisture : null));
+        }));
         el.querySelector('[data-act=ok]').addEventListener('click', () => {
           const picked = el.querySelector('[name=pick]:checked');
           if (!picked) return UI.toast('Choose a bay', 'warn');
@@ -451,28 +489,28 @@
 
     UI.modal({
       title: `Weigh and consume ${r.requestNo}`,
-      body: `<p class="muted">Requirement 6: weigh three bags as they go into the gasifier. The average weight of those three is applied to the whole issue, so the outgoing weight is known.</p>
+      body: `<p class="muted">Weigh three bags as they go into the gasifier. Their average is applied to the whole issue to give the outgoing weight.</p>
         <div class="grid-3">
           ${UI.field('Bag 1 (kg)', UI.input('w1', { type: 'number', step: '0.01', min: 0, required: true }))}
           ${UI.field('Bag 2 (kg)', UI.input('w2', { type: 'number', step: '0.01', min: 0, required: true }))}
           ${UI.field('Bag 3 (kg)', UI.input('w3', { type: 'number', step: '0.01', min: 0, required: true }))}
         </div>
-        <div class="calc-strip" id="consume-out"></div>
-        <p class="small muted">${take} bags will be marked consumed from ${esc(r.bayCode)} and one empty bag record created for each.</p>`,
+        <div id="consume-out"></div>
+        <p class="small muted">${take} bags leave ${esc(r.bayCode)}. The empty bags then wait under Bag returns to be checked.</p>`,
       footer: '<button class="nm-btn" data-close>Cancel</button><button class="nm-btn primary" data-act="ok">Record consumption</button>',
       onMount(el, close) {
         const recalc = () => {
           const ws = ['w1', 'w2', 'w3'].map((n) => Number(el.querySelector(`[name=${n}]`).value)).filter((n) => n > 0);
           const box = el.querySelector('#consume-out');
-          if (ws.length < 1) { box.innerHTML = '<span class="muted">Enter the weights</span>'; return; }
+          if (ws.length < 1) { box.innerHTML = VH.moistureScale(null); return; }
           const avg = D.round2(ws.reduce((a, b) => a + b, 0) / ws.length);
-          const moisture = D.moistureFromWeight(avg, s);
-          const band = D.moistureBand(moisture, s);
           box.innerHTML = `
-            <div><span class="muted small">Average bag</span><b>${avg} kg</b></div>
-            <div><span class="muted small">Moisture estimate</span><b class="t-${band === 'OK' ? 'ok' : band === 'WARN' ? 'warn' : 'danger'}">${moisture}% · ${band}</b></div>
-            <div><span class="muted small">Bags issued</span><b>${r.bags}</b></div>
-            <div><span class="muted small">Outgoing weight</span><b>${kg(D.round2(avg * r.bags))}</b></div>`;
+            <div class="calc-strip">
+              <div><span class="muted small">Average bag</span><b>${avg} kg</b></div>
+              <div><span class="muted small">Bags leaving</span><b>${take}</b></div>
+              <div><span class="muted small">Outgoing weight</span><b>${kg(D.round2(avg * take))}</b></div>
+            </div>
+            ${VH.moistureScale(avg)}`;
         };
         ['w1', 'w2', 'w3'].forEach((n) => el.querySelector(`[name=${n}]`).addEventListener('input', recalc));
         recalc();
@@ -489,14 +527,8 @@
             Object.assign(b, { status: 'CONSUMED', consumedAt: now, usageId: r.id, updatedAt: now });
             Store.markDirty('bags', b.id);
           }
-          // empty bags come back to the bag store (req 14)
-          for (const b of consumed) {
-            const empty = Store.add('bags', {
-              serial: b.serial, status: 'RETURNED', returnedAt: now, originalId: b.id,
-              supplierId: b.supplierId, condition: 'GOOD',
-            }, 'bag-return');
-            void empty;
-          }
+          // The same bag record stays with its serial: the empty bag now waits
+          // under Bag returns to be checked and re-issued (req 14).
 
           Store.update('usageRequests', r.id, {
             status: 'CONSUMED', sampleBags: ws, avgBagKg: avg, moisturePct: moisture,
@@ -505,10 +537,10 @@
           }, 'usage-consume');
 
           VH.audit('usage.consume', 'usage', r.id, `${take} bags from ${r.bayCode} · avg ${avg} kg · moisture ${moisture}% · ${D.round2(avg * take)} kg`);
-          if (moisture !== null && moisture >= (s.moistureWarnPct || 25)) {
-            UI.toast(`Moisture ${moisture}% is high — consider raising a quality issue against this batch`, 'warn', 6500);
+          if (D.moistureBand(moisture, s) !== 'OK') {
+            UI.toast(`Moisture ${moisture}% is high. Consider raising a quality issue against this batch`, 'warn', 6500);
           }
-          UI.toast(`${take} bags consumed · ${kg(D.round2(avg * take))} out`, 'ok');
+          UI.toast(`${take} bags consumed, ${kg(D.round2(avg * take))} out`, 'ok');
           close(); App.refresh();
         });
       },
