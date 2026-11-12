@@ -2,34 +2,93 @@
   "rules": {
     ".read": false,
     ".write": false,
-
     "appConfig": {
       ".read": "auth != null",
-      ".write": "auth != null && auth.token.email === 'w.v.k.kalhara@gmail.com'",
+      ".write": "auth != null && (auth.token.email === 'w.v.k.kalhara@gmail.com' && auth.token.email_verified === true)",
       "subscription": {
         ".validate": "newData.hasChildren(['status','updatedAt']) && (newData.child('status').val() === 'ACTIVE' || newData.child('status').val() === 'SUSPENDED')"
       }
     },
-
     "users": {
-      ".read": "auth != null",
+      ".read": "auth != null && ((auth.token.email === 'w.v.k.kalhara@gmail.com' && auth.token.email_verified === true) || (root.child('users').child(auth.uid).child('role').isString() && root.child('users').child(auth.uid).child('role').val().matches(/^(admin|supervisor|storekeeper|operator|accounts|auditor)$/) && root.child('users').child(auth.uid).child('active').val() !== false))",
       "$uid": {
-        ".write": "auth != null && (auth.uid === $uid || auth.token.email === 'w.v.k.kalhara@gmail.com' || root.child('users').child(auth.uid).child('role').val() === 'admin')",
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && (((auth.token.email === 'w.v.k.kalhara@gmail.com' && auth.token.email_verified === true) || (root.child('users').child(auth.uid).child('role').isString() && root.child('users').child(auth.uid).child('role').val().matches(/^(admin)$/) && root.child('users').child(auth.uid).child('active').val() !== false)) || (auth.uid === $uid && newData.child('role').val() === data.child('role').val() && (!data.exists() || newData.child('active').val() === data.child('active').val())))",
+        ".validate": "newData.hasChildren(['email']) && (newData.child('email').val() === data.child('email').val() || newData.child('email').val() === auth.token.email)",
         "role": {
-          ".write": "auth != null && (auth.token.email === 'w.v.k.kalhara@gmail.com' || root.child('users').child(auth.uid).child('role').val() === 'admin')",
-          ".read": "auth != null",
           ".validate": "newData.isString() && newData.val().matches(/^(admin|supervisor|storekeeper|operator|accounts|auditor)$/)"
         },
-        ".validate": "newData.hasChildren(['email']) && newData.child('email').val() === auth.token.email"
+        "active": {
+          ".validate": "newData.isBoolean()"
+        },
+        "email": {
+          ".validate": "newData.isString()"
+        },
+        "name": {
+          ".validate": "newData.isString() && newData.val().length <= 120"
+        }
       }
     },
-
     "biomass": {
-      ".read": "auth != null",
-      "$collection": {
-        ".write": "auth != null && (auth.token.email === 'w.v.k.kalhara@gmail.com' || !root.child('appConfig/subscription/status').exists() || root.child('appConfig/subscription/status').val() === 'ACTIVE')",
+      ".read": "auth != null && ((auth.token.email === 'w.v.k.kalhara@gmail.com' && auth.token.email_verified === true) || (root.child('users').child(auth.uid).child('role').isString() && root.child('users').child(auth.uid).child('role').val().matches(/^(admin|supervisor|storekeeper|operator|accounts|auditor)$/) && root.child('users').child(auth.uid).child('active').val() !== false))",
+      "suppliers": {
+        ".write": "auth != null && ((auth.token.email === 'w.v.k.kalhara@gmail.com' && auth.token.email_verified === true) || ((root.child('users').child(auth.uid).child('role').isString() && root.child('users').child(auth.uid).child('role').val().matches(/^(admin|supervisor|storekeeper)$/) && root.child('users').child(auth.uid).child('active').val() !== false) && (!root.child('appConfig/subscription/status').exists() || root.child('appConfig/subscription/status').val() === 'ACTIVE')))",
         "$record": {
-          ".validate": "newData.hasChildren(['id']) && newData.child('id').val() === $record && newData.child('updatedAt').isString()"
+          ".validate": "newData.hasChildren(['id', 'updatedAt']) && newData.child('id').val() === $record && newData.child('updatedAt').isString()"
+        }
+      },
+      "farmers": {
+        ".write": "auth != null && ((auth.token.email === 'w.v.k.kalhara@gmail.com' && auth.token.email_verified === true) || ((root.child('users').child(auth.uid).child('role').isString() && root.child('users').child(auth.uid).child('role').val().matches(/^(admin|supervisor|storekeeper)$/) && root.child('users').child(auth.uid).child('active').val() !== false) && (!root.child('appConfig/subscription/status').exists() || root.child('appConfig/subscription/status').val() === 'ACTIVE')))",
+        "$record": {
+          ".validate": "newData.hasChildren(['id', 'updatedAt']) && newData.child('id').val() === $record && newData.child('updatedAt').isString()"
+        }
+      },
+      "bags": {
+        ".write": "auth != null && ((auth.token.email === 'w.v.k.kalhara@gmail.com' && auth.token.email_verified === true) || ((root.child('users').child(auth.uid).child('role').isString() && root.child('users').child(auth.uid).child('role').val().matches(/^(admin|supervisor|storekeeper|operator)$/) && root.child('users').child(auth.uid).child('active').val() !== false) && (!root.child('appConfig/subscription/status').exists() || root.child('appConfig/subscription/status').val() === 'ACTIVE')))",
+        "$record": {
+          ".validate": "newData.hasChildren(['id', 'updatedAt']) && newData.child('id').val() === $record && newData.child('updatedAt').isString()"
+        }
+      },
+      "bagIssues": {
+        ".write": "auth != null && ((auth.token.email === 'w.v.k.kalhara@gmail.com' && auth.token.email_verified === true) || ((root.child('users').child(auth.uid).child('role').isString() && root.child('users').child(auth.uid).child('role').val().matches(/^(admin|supervisor|storekeeper)$/) && root.child('users').child(auth.uid).child('active').val() !== false) && (!root.child('appConfig/subscription/status').exists() || root.child('appConfig/subscription/status').val() === 'ACTIVE')))",
+        "$record": {
+          ".validate": "newData.hasChildren(['id', 'updatedAt']) && newData.child('id').val() === $record && newData.child('updatedAt').isString()"
+        }
+      },
+      "deliveries": {
+        ".write": "auth != null && ((auth.token.email === 'w.v.k.kalhara@gmail.com' && auth.token.email_verified === true) || ((root.child('users').child(auth.uid).child('role').isString() && root.child('users').child(auth.uid).child('role').val().matches(/^(admin|supervisor|storekeeper)$/) && root.child('users').child(auth.uid).child('active').val() !== false) && (!root.child('appConfig/subscription/status').exists() || root.child('appConfig/subscription/status').val() === 'ACTIVE')))",
+        "$record": {
+          ".validate": "newData.hasChildren(['id', 'updatedAt']) && newData.child('id').val() === $record && newData.child('updatedAt').isString()"
+        }
+      },
+      "bays": {
+        ".write": "auth != null && ((auth.token.email === 'w.v.k.kalhara@gmail.com' && auth.token.email_verified === true) || ((root.child('users').child(auth.uid).child('role').isString() && root.child('users').child(auth.uid).child('role').val().matches(/^(admin|supervisor|storekeeper|operator)$/) && root.child('users').child(auth.uid).child('active').val() !== false) && (!root.child('appConfig/subscription/status').exists() || root.child('appConfig/subscription/status').val() === 'ACTIVE')))",
+        "$record": {
+          ".validate": "newData.hasChildren(['id', 'updatedAt']) && newData.child('id').val() === $record && newData.child('updatedAt').isString()"
+        }
+      },
+      "usageRequests": {
+        ".write": "auth != null && ((auth.token.email === 'w.v.k.kalhara@gmail.com' && auth.token.email_verified === true) || ((root.child('users').child(auth.uid).child('role').isString() && root.child('users').child(auth.uid).child('role').val().matches(/^(admin|supervisor|storekeeper|operator)$/) && root.child('users').child(auth.uid).child('active').val() !== false) && (!root.child('appConfig/subscription/status').exists() || root.child('appConfig/subscription/status').val() === 'ACTIVE')))",
+        "$record": {
+          ".validate": "newData.hasChildren(['id', 'updatedAt']) && newData.child('id').val() === $record && newData.child('updatedAt').isString()"
+        }
+      },
+      "qualityIssues": {
+        ".write": "auth != null && ((auth.token.email === 'w.v.k.kalhara@gmail.com' && auth.token.email_verified === true) || ((root.child('users').child(auth.uid).child('role').isString() && root.child('users').child(auth.uid).child('role').val().matches(/^(admin|supervisor|storekeeper|operator)$/) && root.child('users').child(auth.uid).child('active').val() !== false) && (!root.child('appConfig/subscription/status').exists() || root.child('appConfig/subscription/status').val() === 'ACTIVE')))",
+        "$record": {
+          ".validate": "newData.hasChildren(['id', 'updatedAt']) && newData.child('id').val() === $record && newData.child('updatedAt').isString()"
+        }
+      },
+      "payments": {
+        ".write": "auth != null && ((auth.token.email === 'w.v.k.kalhara@gmail.com' && auth.token.email_verified === true) || ((root.child('users').child(auth.uid).child('role').isString() && root.child('users').child(auth.uid).child('role').val().matches(/^(admin|supervisor|storekeeper|accounts)$/) && root.child('users').child(auth.uid).child('active').val() !== false) && (!root.child('appConfig/subscription/status').exists() || root.child('appConfig/subscription/status').val() === 'ACTIVE')))",
+        "$record": {
+          ".validate": "newData.hasChildren(['id', 'updatedAt']) && newData.child('id').val() === $record && newData.child('updatedAt').isString()"
+        }
+      },
+      "bagReturns": {
+        ".write": "auth != null && ((auth.token.email === 'w.v.k.kalhara@gmail.com' && auth.token.email_verified === true) || ((root.child('users').child(auth.uid).child('role').isString() && root.child('users').child(auth.uid).child('role').val().matches(/^(admin|supervisor|storekeeper)$/) && root.child('users').child(auth.uid).child('active').val() !== false) && (!root.child('appConfig/subscription/status').exists() || root.child('appConfig/subscription/status').val() === 'ACTIVE')))",
+        "$record": {
+          ".validate": "newData.hasChildren(['id', 'updatedAt']) && newData.child('id').val() === $record && newData.child('updatedAt').isString()"
         }
       }
     }

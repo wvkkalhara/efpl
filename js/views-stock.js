@@ -35,7 +35,7 @@
             ], { id: 'bag-status' })}
           </div>
           <div class="toolbar-right">
-            ${Auth.can('bag.generate') ? '<button class="nm-btn" id="gen-bags">＋ Number new bags</button>' : ''}
+            ${Auth.can('bag.generate') ? '<button class="nm-btn" id="gen-bags"><i class="i i-plus"></i>Number new bags</button>' : ''}
             ${Auth.can('bag.issue') ? '<button class="nm-btn primary" id="issue-bags">→ Issue to supplier</button>' : ''}
           </div>
         </div>
@@ -70,13 +70,10 @@
           ],
         });
         UI.$$('[data-trace]', view).forEach((b) => b.addEventListener('click', () => {
-          location.hash = '#/trace';
-          App.route = 'trace';
-          App.render();
-          setTimeout(() => {
+          App.navigate('trace', () => {
             const inp = document.getElementById('trace-input');
             if (inp) { inp.value = b.dataset.trace; document.getElementById('trace-go').click(); }
-          }, 60);
+          });
         }));
       };
       draw();
@@ -229,7 +226,7 @@
       view.innerHTML = `
         <div class="toolbar">
           <p class="muted">Stock is counted from the bag serials stored against each bay, so it corrects itself every time a bag moves.</p>
-          <div class="toolbar-right">${Auth.can('bay.allocate') ? '<button class="nm-btn" id="add-bay">＋ Add bay</button>' : ''}</div>
+          <div class="toolbar-right">${Auth.can('bay.allocate') ? '<button class="nm-btn" id="add-bay"><i class="i i-plus"></i>Add bay</button>' : ''}</div>
         </div>
         <div class="bay-grid">
           ${stock.map(({ bay, bags }) => {
@@ -248,7 +245,7 @@
               <p class="muted small">${pctFull}% of ${(bay.capacityBags || 0).toLocaleString()} bag capacity${oldest ? ` · oldest ${dOnly(oldest.deliveredAt)}` : ''}</p>
               <div class="chips">${Object.entries(byType).map(([t, n]) => `<span class="chip">${esc(((CFG.biomassTypes.find((x) => x.id === t) || {}).label) || t)} · ${n}</span>`).join('') || '<span class="muted small">Empty</span>'}</div>
               <div class="bay-actions">
-                ${Auth.can('usage.request') ? `<button class="nm-btn tiny" data-issue="${bay.id}" ${bags.length ? '' : 'disabled'}>⚡ Request issue</button>` : ''}
+                ${Auth.can('usage.request') ? `<button class="nm-btn tiny" data-issue="${bay.id}" ${bags.length ? '' : 'disabled'}><i class="i i-flame"></i>Request issue</button>` : ''}
                 <button class="nm-btn tiny" data-view="${bay.id}">View bags</button>
               </div>
             </div>`;
@@ -303,7 +300,7 @@
       view.innerHTML = `
         <section class="nm-card pad">
           <div class="card-head"><h3>Bay selection — check the bag weight first</h3>
-            ${Auth.can('usage.request') ? '<button class="nm-btn primary" id="new-usage">＋ New issue request</button>' : ''}</div>
+            ${Auth.can('usage.request') ? '<button class="nm-btn primary" id="new-usage"><i class="i i-plus"></i>New issue request</button>' : ''}</div>
           <p class="muted">Requirement 5: the supervisor picks the bay after weighing a bag, because bag weight tells us the moisture level. Wetter biomass is left to dry or mixed with a drier bay.</p>
           <div class="bay-grid tight">
             ${bays.map(({ bay, count, avgKg }) => {

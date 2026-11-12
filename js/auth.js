@@ -26,6 +26,16 @@
   const isSuperEmail = (email) =>
     (CFG.superAdminEmails || []).map((e) => e.toLowerCase()).includes(String(email || '').toLowerCase());
 
+  /** Read the claims of a Firebase ID token (no signature check — the
+   *  database verifies that; here it only decides what the screen shows). */
+  function tokenClaims(idToken) {
+    try {
+      const part = String(idToken || '').split('.')[1] || '';
+      const json = atob(part.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(part.length / 4) * 4, '='));
+      return JSON.parse(json) || {};
+    } catch { return {}; }
+  }
+
   /* ----------------------------- crypto ------------------------------ */
   const subtle = (window.crypto && window.crypto.subtle) || null;
 
@@ -120,14 +130,25 @@
     onChange(fn) { listeners.add(fn); return () => listeners.delete(fn); },
     current() { return session; },
     user() { return session; },
-    isSuper(user) { return !!user && (user.role === 'super_admin' || isSuperEmail(user.email)); },
+    /**
+     * Owner check. For the signed-in session it needs a *verified* owner
+     * email (Google or Firebase confirmed the address) — a look-alike
+     * account registered with the owner's address but never verified does
+     * not count. For rows in the staff list it is a display label only.
+     */
+    isSuper(user) {
+      if (!user) return false;
+      if (user === session || user.mode) return user.role === 'super_admin' && user.ownerVerified === true;
+      return user.role === 'super_admin' || isSuperEmail(user.email);
+    },
 
     /** Resolve a person's role from the local register, falling back safely. */
     roleOf(user) {
       if (!user) return null;
       if (Auth.isSuper(user)) return 'super_admin';
       const p = Store.all('users').find((u) => (u.email || '').toLowerCase() === String(user.email || '').toLowerCase());
-      return (p && p.role) || user.role || 'pending';
+      const role = (p && p.role) || user.role || 'pending';
+      return role === 'super_admin' ? 'pending' : role;   // owner rights only through isSuper()
     },
 
     /** Signed in, but the owner has not assigned a role yet. */
@@ -200,9 +221,14 @@
         } catch { /* rules may not allow yet — the local role stands */ }
       }
 
-      const role = isSuperEmail(tok.email)
-        ? 'super_admin'
-        : (cloudProfile && cloudProfile.role) || (profile && profile.role) || 'pending';
+      // Owner rights need the owner's address *and* proof it was verified:
+      // online from the token itself, offline from the last verified sign-in.
+      const verified = tok.idToken
+        ? tokenClaims(tok.idToken).email_verified === true
+        : !!(profile && profile.ownerVerified === true);
+      const ownerVerified = isSuperEmail(tok.email) && verified;
+      const fallback = (cloudProfile && cloudProfile.role) || (profile && profile.role !== 'super_admin' && profile.role) || 'pending';
+      const role = ownerVerified ? 'super_admin' : fallback;
 
       if (!profile) {
         profile = Store.add('users', {
@@ -216,6 +242,7 @@
         }, 'signup');
       } else {
         profile.role = role;
+        if (ownerVerified) profile.ownerVerified = true;
         profile.uid = tok.uid || profile.uid;
         profile.lastLoginAt = new Date().toISOString();
         Store.save('login');
@@ -232,6 +259,7 @@
         email: profile.email,
         name: profile.name,
         role,
+        ownerVerified,
         mode,
         idToken: tok.idToken || null,
         refreshToken: tok.refreshToken || null,
@@ -288,7 +316,9 @@
 
     logout(reason) {
       clearInterval(refreshTimer);
+      const wasDemo = session && session.mode === 'preview';
       session = null;
+      if (wasDemo) Store.useSpace('live');
       try { localStorage.removeItem(CFG.sessionKey); } catch { /* ignore */ }
       emit({ type: 'signed-out', reason });
     },
@@ -382,6 +412,10 @@
      */
     previewSignIn() {
       if (!CFG.allowLocalPreview) throw new Error('Preview sign-in is switched off');
+      // The demo runs in its own sandboxed store: it cannot see real records
+      // left on this device, and nothing done in it is ever uploaded.
+      Store.useSpace('demo');
+      window.Seed.ensure();
       // The demo always opens as a normal Administrator — never as the owner —
       // so anyone shown the demo sees exactly what an admin would see.
       const profile = Store.all('users').find((u) => u.role === 'admin' && u.active !== false && !isSuperEmail(u.email));

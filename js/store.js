@@ -49,6 +49,47 @@
   const nowISO = () => new Date().toISOString();
   const uid = (p = 'id') => `${p}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 9)}`;
 
+
+  /* --------------------------- input hygiene --------------------------
+     Every record entering the store — typed in a form, imported from a
+     backup, or pulled from the cloud — passes through clean(). It removes
+     the characters that build HTML (< > " `) from text, and forces number
+     fields to be real numbers, so a value written by anyone with database
+     access can never become markup or script on another person's screen. */
+  const NUM_KEYS = new Set([
+    'bags', 'bagCount', 'avgBagKg', 'avgFillPct', 'moisturePct', 'netKg', 'grossKg', 'tareKg',
+    'unitPrice', 'reducedUnitPrice', 'grossAmount', 'deductions', 'netAmount', 'amount', 'capacity',
+    'capacityBags', 'count', 'roundNo', 'sampleSizePct', 'minSampleSize', 'standardDryBagKg',
+    'fillThresholdPct', 'replacementOrderQty', 'landAcres', 'fillPct', 'kg', 'weightKg', 'qty',
+    'quantity', 'bagsIssued', 'bagsReturned', 'damaged', 'tries', 'n',
+  ]);
+  const HTML_CHARS = /[<>"`]/g;
+  function clean(value, key) {
+    if (value === null || value === undefined) return value;
+    if (key && NUM_KEYS.has(key)) {
+      if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+      if (typeof value === 'string' && value.trim() !== '' && Number.isFinite(Number(value))) return Number(value);
+      if (typeof value === 'string' && value.trim() === '') return null;
+      if (typeof value !== 'object') return null;
+    }
+    if (typeof value === 'string') return value.replace(HTML_CHARS, '');
+    if (Array.isArray(value)) return value.map((v) => clean(v));
+    if (typeof value === 'object') {
+      const out = {};
+      for (const k of Object.keys(value)) {
+        if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
+        out[k] = clean(value[k], k);
+      }
+      return out;
+    }
+    return value;
+  }
+
+  /* The live records and the demo records live under different storage
+     keys, so the no-password demo can never see or upload real data. */
+  let space = 'live';
+  const storeKey = () => (space === 'demo' ? `${CFG.storageKey}.demo` : CFG.storageKey);
+
   function blankDoc() {
     const d = {
       meta: {
@@ -100,7 +141,7 @@
 
     /* ------------------------------------------------------------------ */
     init() {
-      const rawDoc = raw.get(CFG.storageKey);
+      const rawDoc = raw.get(storeKey());
       if (rawDoc) {
         try {
           const parsed = JSON.parse(rawDoc);
@@ -108,13 +149,13 @@
         } catch (e) {
           console.error('Corrupt local database — starting a fresh one.', e);
           // Never silently destroy: keep a copy for recovery.
-          raw.set(`${CFG.storageKey}.corrupt.${Date.now()}`, rawDoc);
+          raw.set(`${storeKey()}.corrupt.${Date.now()}`, rawDoc);
           this.data = blankDoc();
         }
       } else {
         this.data = blankDoc();
       }
-      for (const c of COLLECTIONS) if (!Array.isArray(this.data[c])) this.data[c] = [];
+      for (const c of COLLECTIONS) this.data[c] = Array.isArray(this.data[c]) ? this.data[c].map((r) => clean(r)) : [];
       this.data.settings = Object.assign(blankDoc().settings, this.data.settings || {});
       this.data.config = deepMerge(blankDoc().config, this.data.config || {});
       return this.data;
@@ -130,7 +171,7 @@
       this._saveTimer = setTimeout(() => {
         if (persistence === 'localStorage') {
           try {
-            raw.set(CFG.storageKey, JSON.stringify(this.data));
+            raw.set(storeKey(), JSON.stringify(this.data));
           } catch (e) {
             if (String(e && e.name) === 'QuotaExceededError') {
               this.notify('quota');
@@ -148,11 +189,42 @@
     /** Synchronous flush — used before printing or on page hide. */
     flush() {
       clearTimeout(this._saveTimer);
-      if (persistence === 'localStorage') raw.set(CFG.storageKey, JSON.stringify(this.data));
+      if (persistence === 'localStorage') raw.set(storeKey(), JSON.stringify(this.data));
       return this.data;
     },
 
     /* -------------------------- collections --------------------------- */
+    clean,
+
+    get space() { return space; },
+    /** Switch between the live store and the sandboxed demo store. */
+    useSpace(name) {
+      const next = name === 'demo' ? 'demo' : 'live';
+      if (next === space && this.data) return this.data;
+      if (this.data) this.flush();
+      space = next;
+      return this.init();
+    },
+
+    /** Remove seeded demo records (and their upload queue entries) from the live store. */
+    purgeDemo() {
+      if (space !== 'live') return 0;
+      let removed = 0;
+      const gone = new Set();
+      for (const c of COLLECTIONS) {
+        if (!Array.isArray(this.data[c])) continue;
+        this.data[c] = this.data[c].filter((r) => {
+          if (r && r.demo === true) { removed++; gone.add(`${c}:${r.id}`); return false; }
+          return true;
+        });
+      }
+      if (removed) {
+        this.data.outbox = (this.data.outbox || []).filter((o) => !gone.has(`${o.coll}:${o.id}`));
+        this.data.meta.seeded = true;
+        this.flush();
+      }
+      return removed;
+    },
     all(coll) { return this.data[coll] || []; },
     byId(coll, id) { return this.all(coll).find((r) => r.id === id) || null; },
     where(coll, pred) { return this.all(coll).filter(pred); },
@@ -176,7 +248,7 @@
     },
 
     add(coll, record, reason = 'add') {
-      const rec = Object.assign({ id: uid(coll.slice(0, 3)), createdAt: nowISO(), updatedAt: nowISO() }, record);
+      const rec = Object.assign({ id: uid(coll.slice(0, 3)), createdAt: nowISO(), updatedAt: nowISO() }, clean(record));
       this.data[coll].push(rec);
       this.markDirty(coll, rec.id);
       this.save(reason);
@@ -186,7 +258,7 @@
     update(coll, id, patch, reason = 'update') {
       const rec = this.byId(coll, id);
       if (!rec) return null;
-      Object.assign(rec, patch, { updatedAt: nowISO() });
+      Object.assign(rec, clean(patch), { updatedAt: nowISO() });
       this.markDirty(coll, id);
       this.save(reason);
       return rec;
@@ -208,7 +280,7 @@
     bulkAdd(coll, records, reason = 'bulk-add') {
       const out = [];
       for (const r of records) {
-        const rec = Object.assign({ id: uid(coll.slice(0, 3)), createdAt: nowISO(), updatedAt: nowISO() }, r);
+        const rec = Object.assign({ id: uid(coll.slice(0, 3)), createdAt: nowISO(), updatedAt: nowISO() }, clean(r));
         this.data[coll].push(rec);
         if (this.data.outbox) this.data.outbox.push({ id: uid('ob'), coll, id: rec.id, at: nowISO(), tries: 0 });
         out.push(rec);
@@ -222,7 +294,7 @@
 
     settings() { return this.data.settings; },
     patchSettings(patch) {
-      Object.assign(this.data.settings, patch, { updatedAt: nowISO() });
+      Object.assign(this.data.settings, clean(patch), { updatedAt: nowISO() });
       this.markDirty('settings', 'singleton');
       this.save('settings');
       return this.data.settings;
@@ -233,8 +305,9 @@
     /* ------------------------- import / export ------------------------ */
     exportJSON() { return JSON.parse(JSON.stringify(this.data)); },
 
-    importJSON(obj, { merge = false } = {}) {
-      if (!obj || typeof obj !== 'object') throw new Error('Not a valid backup file');
+    importJSON(objRaw, { merge = false } = {}) {
+      if (!objRaw || typeof objRaw !== 'object') throw new Error('Not a valid backup file');
+      const obj = clean(objRaw);
       if (merge) {
         for (const c of COLLECTIONS) {
           if (!Array.isArray(obj[c])) continue;
@@ -264,7 +337,7 @@
     stats() {
       return {
         persistence: this.persistence,
-        bytes: persistence === 'localStorage' ? (raw.get(CFG.storageKey) || '').length : 0,
+        bytes: persistence === 'localStorage' ? (raw.get(storeKey()) || '').length : 0,
         bags: this.all('bags').length,
         pending: (this.data.outbox || []).length,
         deviceId: this.data.meta.deviceId,
