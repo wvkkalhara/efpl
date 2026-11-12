@@ -95,12 +95,12 @@
       const bays = Store.where('bays', (b) => !b.deleted).map((b) => ({ ...b, count: VH.bagsInBay(b.id) }));
 
       const alerts = [];
-      if (awaiting.length) alerts.push({ tone: 'warn', text: `${awaiting.length} truck(s) waiting to be accepted and allocated a bay`, nav: 'deliveries' });
-      if (pendingUsage.length) alerts.push({ tone: 'warn', text: `${pendingUsage.length} gasifier issue request(s) need supervisor approval`, nav: 'gasifier' });
-      if (pendingPay.length) alerts.push({ tone: 'info', text: `${pendingPay.length} payment(s) in the pipeline worth ${money(pendingValue)}`, nav: 'payments' });
-      if (openQuality.length) alerts.push({ tone: 'danger', text: `${openQuality.length} open quality issue(s) traced to suppliers/farmers`, nav: 'quality' });
+      if (awaiting.length) alerts.push({ tone: 'warn', text: `${awaiting.length} ${awaiting.length === 1 ? 'truck is' : 'trucks are'} waiting to be accepted and allocated a bay`, nav: 'deliveries' });
+      if (pendingUsage.length) alerts.push({ tone: 'warn', text: `${pendingUsage.length} gasifier issue ${pendingUsage.length === 1 ? 'request needs' : 'requests need'} supervisor approval`, nav: 'gasifier' });
+      if (pendingPay.length) alerts.push({ tone: 'info', text: `${pendingPay.length} ${pendingPay.length === 1 ? 'payment' : 'payments'} in the pipeline, worth ${money(pendingValue)}`, nav: 'payments' });
+      if (openQuality.length) alerts.push({ tone: 'danger', text: `${openQuality.length} open quality ${openQuality.length === 1 ? 'issue' : 'issues'} traced to suppliers and farmers`, nav: 'quality' });
       if (bagStore < 50) alerts.push({ tone: 'danger', text: `Only ${bagStore} empty bags left in the bag store — order replacements`, nav: 'returns' });
-      if (damaged) alerts.push({ tone: 'warn', text: `${damaged} damaged bag(s) awaiting repair or write-off`, nav: 'returns' });
+      if (damaged) alerts.push({ tone: 'warn', text: `${damaged} damaged ${damaged === 1 ? 'bag' : 'bags'} awaiting repair or write-off`, nav: 'returns' });
 
       view.innerHTML = `
         <section class="hero nm-card">
@@ -110,9 +110,9 @@
             <p class="muted">${esc(Store.settings().siteName)} · ${esc(Store.settings().siteLocation)} · ${stored.length.toLocaleString()} bags in storage</p>
           </div>
           <div class="hero-actions">
-            ${Auth.can('delivery.create') ? '<button class="nm-btn primary" data-quick="intake">＋ Receive biomass</button>' : ''}
-            ${Auth.can('usage.approve') ? '<button class="nm-btn" data-quick="gasifier">⚡ Approve bay issue</button>' : ''}
-            ${Auth.can('report.read') ? '<button class="nm-btn" data-quick="reports">◱ Reports</button>' : ''}
+            ${Auth.can('delivery.create') ? '<button class="nm-btn primary" data-quick="intake"><i class="i i-plus"></i>Receive biomass</button>' : ''}
+            ${Auth.can('usage.approve') ? '<button class="nm-btn" data-quick="gasifier"><i class="i i-flame"></i>Approve bay issue</button>' : ''}
+            ${Auth.can('report.read') ? '<button class="nm-btn" data-quick="reports"><i class="i i-chart"></i>Reports</button>' : ''}
           </div>
         </section>
 
@@ -332,7 +332,7 @@
         box.innerHTML = `<div><span class="muted small">Serials captured</span><b>${list.length}</b></div>
           <div><span class="muted small">Bags counted</span><b>${count || '—'}</b></div>
           <div><span class="muted small">Not in the bag registry</span><b class="${unknown.length ? 't-warn' : 't-ok'}">${unknown.length}</b></div>
-          ${mismatch ? `<div class="t-warn"><span class="muted small">⚠ Count</span><b>${list.length - count > 0 ? '+' : ''}${list.length - count} vs bag count</b></div>` : ''}`;
+          ${mismatch ? `<div class="t-warn"><span class="muted small"><i class="i i-alert"></i>Count</span><b>${list.length - count > 0 ? '+' : ''}${list.length - count} vs bag count</b></div>` : ''}`;
       }
 
       bagCountEl.addEventListener('input', () => { fills = []; renderFillInputs(); updateWeigh(); updateFill(); updateSerials(); });
@@ -406,7 +406,7 @@
             }).join('')}
           </div>
           <div class="toolbar-right">
-            ${Auth.can('delivery.create') ? '<button class="nm-btn primary" id="new-delivery">＋ Receive biomass</button>' : ''}
+            ${Auth.can('delivery.create') ? '<button class="nm-btn primary" id="new-delivery"><i class="i i-plus"></i>Receive biomass</button>' : ''}
           </div>
         </div>
         <div id="delivery-table"></div>`;
@@ -501,8 +501,8 @@
           ${p ? badge(`${p.paymentNo} · ${D.PAYMENT_LABEL[p.status]}`, UI.statusTone(p.status)) : ''}
         </div>`,
       footer: `
-        <button class="nm-btn" data-act="print">🖨 Print receipt</button>
-        <button class="nm-btn" data-act="labels">🏷 Print bag labels</button>
+        <button class="nm-btn" data-act="print"><i class="i i-printer"></i>Print receipt</button>
+        <button class="nm-btn" data-act="labels"><i class="i i-tag"></i>Print bag labels</button>
         ${d.status === 'AWAITING_ACCEPTANCE' && Auth.can('delivery.accept') ? '<button class="nm-btn primary" data-act="accept">Accept &amp; allocate bay</button>' : ''}
         ${d.status === 'AWAITING_ACCEPTANCE' && Auth.can('delivery.reject') ? '<button class="nm-btn danger" data-act="reject">Reject</button>' : ''}
         ${d.status === 'ACCEPTED' && Auth.can('payment.split') ? '<button class="nm-btn" data-act="split">Declare farmer split</button>' : ''}
@@ -820,7 +820,7 @@
               <li><b>Stored in bay</b><span>${bag.bayCode ? esc(bag.bayCode) : '—'}</span></li>
               <li><b>Consumed</b><span>${r.usage ? `${dOnly(r.usage.consumedAt)} · moisture ${r.usage.moisturePct}%` : '—'}</span></li>
             </ol>
-            ${Auth.can('quality.report') ? `<button class="nm-btn danger" id="raise-issue">⚠ Report a problem with this bag</button>` : ''}
+            ${Auth.can('quality.report') ? `<button class="nm-btn danger" id="raise-issue"><i class="i i-alert"></i>Report a problem with this bag</button>` : ''}
           </div>`;
         const btn = out.querySelector('#raise-issue');
         if (btn) btn.addEventListener('click', () => App.raiseQuality(bag.serial));

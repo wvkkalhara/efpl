@@ -115,7 +115,7 @@
           </div>
         </div>`,
       footer: `
-        <button class="nm-btn" data-act="slip">🖨 Payment slip</button>
+        <button class="nm-btn" data-act="slip"><i class="i i-printer"></i>Payment slip</button>
         ${canSplit ? '<button class="nm-btn" data-act="split">Declare farmer split</button>' : ''}
         ${canApprove ? '<button class="nm-btn primary" data-act="approve">Authorise</button>' : ''}
         ${canRelease ? '<button class="nm-btn primary" data-act="release">Release to Head Office</button>' : ''}
@@ -187,7 +187,7 @@
       view.innerHTML = `
         <div class="toolbar">
           <div class="toolbar-left"><input class="nm-input search" id="sup-search" placeholder="Search supplier, code, village…" /></div>
-          <div class="toolbar-right">${Auth.can('supplier.write') ? '<button class="nm-btn primary" id="add-sup">＋ Add supplier</button>' : ''}</div>
+          <div class="toolbar-right">${Auth.can('supplier.write') ? '<button class="nm-btn primary" id="add-sup"><i class="i i-plus"></i>Add supplier</button>' : ''}</div>
         </div>
         <div id="sup-table"></div>`;
 
@@ -287,7 +287,7 @@
           <div class="nm-inset pad-sm">
             <h4>Farmers (${farmers.length})</h4>
             <ul class="plain-list">${farmers.slice(0, 12).map((f) => `<li>${esc(f.code)} · ${esc(f.name)} <span class="muted small">${esc(f.village || '')}</span></li>`).join('') || '<li class="muted">None registered.</li>'}</ul>
-            ${Auth.can('farmer.write') ? '<button class="nm-btn tiny" data-act="addfarmer">＋ Add farmer</button>' : ''}
+            ${Auth.can('farmer.write') ? '<button class="nm-btn tiny" data-act="addfarmer"><i class="i i-plus"></i>Add farmer</button>' : ''}
           </div>
           <div class="nm-inset pad-sm">
             <h4>Recent deliveries</h4>
@@ -297,7 +297,7 @@
           </div>
         </div>`,
       footer: `${Auth.can('supplier.write') ? '<button class="nm-btn" data-act="edit">Edit supplier</button>' : ''}
-               <button class="nm-btn" data-act="stmt">🖨 Statement</button>`,
+               <button class="nm-btn" data-act="stmt"><i class="i i-printer"></i>Statement</button>`,
       onMount(el, close) {
         el.addEventListener('click', (e) => {
           const b = e.target.closest('[data-act]');
@@ -335,7 +335,7 @@
             <input class="nm-input search" id="f-search" placeholder="Search farmer, code, village…" />
             ${UI.select('supFilter', [{ value: '', label: 'All suppliers' }, ...VH.supplierOptions()], { id: 'f-sup' })}
           </div>
-          <div class="toolbar-right">${Auth.can('farmer.write') ? '<button class="nm-btn primary" id="add-farmer">＋ Add farmer</button>' : ''}</div>
+          <div class="toolbar-right">${Auth.can('farmer.write') ? '<button class="nm-btn primary" id="add-farmer"><i class="i i-plus"></i>Add farmer</button>' : ''}</div>
         </div>
         <div id="f-table"></div>`;
       const draw = () => {
@@ -441,7 +441,7 @@
       view.innerHTML = `
         <section class="nm-card pad">
           <div class="card-head"><h3>Problems traced back to a supplier and a farmer</h3>
-            ${Auth.can('quality.report') ? '<button class="nm-btn primary" id="new-issue">＋ Report an issue</button>' : ''}</div>
+            ${Auth.can('quality.report') ? '<button class="nm-btn primary" id="new-issue"><i class="i i-plus"></i>Report an issue</button>' : ''}</div>
           <p class="muted">Requirement 11: when the biomass causes trouble at the gasifier, the bag serial takes us to the round, the supplier and the farmer so the corrective action reaches the right people.</p>
         </section>
         ${UI.table({
@@ -586,7 +586,7 @@
         </section>
         <div class="toolbar">
           <p class="muted">Requirement 14: empty bags come back to the bag area, are checked, repaired where possible, and replacements are ordered.</p>
-          <div class="toolbar-right">${Auth.can('returns.write') ? '<button class="nm-btn primary" id="new-return">＋ Record a return</button>' : ''}</div>
+          <div class="toolbar-right">${Auth.can('returns.write') ? '<button class="nm-btn primary" id="new-return"><i class="i i-plus"></i>Record a return</button>' : ''}</div>
         </div>
         ${UI.table({
           rows: returns, empty: 'No returns recorded yet.',
@@ -690,7 +690,7 @@
 
           <section class="cols-2">
             <div class="nm-card pad">
-              <div class="card-head"><h3>In vs out</h3><button class="link" id="csv-movement">⬇ CSV</button></div>
+              <div class="card-head"><h3>In vs out</h3><button class="link" id="csv-movement"><i class="i i-download"></i>CSV</button></div>
               <table class="mini">
                 <tr><th>Incoming (supplier)</th><td class="num">${bagsIn.toLocaleString()} bags</td><td class="num">${kg(kgIn)}</td></tr>
                 <tr><th>Outgoing (gasifier)</th><td class="num">${bagsOut.toLocaleString()} bags</td><td class="num">${kg(kgOut)}</td></tr>
@@ -700,14 +700,14 @@
               <p class="small muted">In-weight is the weighbridge net at receiving; out-weight is the three-bag average applied to the issue (requirement 7).</p>
             </div>
             <div class="nm-card pad">
-              <div class="card-head"><h3>Stock by bay</h3><button class="link" id="csv-stock">⬇ CSV</button></div>
+              <div class="card-head"><h3>Stock by bay</h3><button class="link" id="csv-stock"><i class="i i-download"></i>CSV</button></div>
               <table class="mini"><thead><tr><th>Bay</th><th class="num">Bags</th><th class="num">Capacity</th><th class="num">Fill</th></tr></thead>
                 <tbody>${bayRows.map((b) => `<tr><td>${esc(b.code)}</td><td class="num">${b.bags.toLocaleString()}</td><td class="num">${(b.capacity || 0).toLocaleString()}</td><td class="num">${b.capacity ? Math.round((b.bags / b.capacity) * 100) : 0}%</td></tr>`).join('')}</tbody></table>
             </div>
           </section>
 
           <section class="nm-card pad">
-            <div class="card-head"><h3>Supplier performance</h3><button class="link" id="csv-suppliers">⬇ CSV</button></div>
+            <div class="card-head"><h3>Supplier performance</h3><button class="link" id="csv-suppliers"><i class="i i-download"></i>CSV</button></div>
             ${UI.table({
               rows: supplierRows, empty: 'No accepted deliveries in this period.',
               columns: [
@@ -730,8 +730,8 @@
             <button class="seg-btn" data-days="90">Last 90 days</button>
           </div>
           <div class="toolbar-right">
-            <button class="nm-btn" id="print-report">🖨 Print</button>
-            <button class="nm-btn" id="full-backup">⬇ Backup JSON</button>
+            <button class="nm-btn" id="print-report"><i class="i i-printer"></i>Print</button>
+            <button class="nm-btn" id="full-backup"><i class="i i-download"></i>Backup JSON</button>
           </div>
         </div>
         <div id="report-body"></div>`;
@@ -815,7 +815,7 @@
           return `
           <section class="nm-card pad">
             <div class="card-head"><h3>Staff accounts</h3>
-              <button class="nm-btn primary" id="add-user">＋ Add staff account</button></div>
+              <button class="nm-btn primary" id="add-user"><i class="i i-plus"></i>Add staff account</button></div>
             <p class="muted">People join themselves — they tap <b>Continue with Google</b> (or create an account) and appear below as
               <b>Awaiting approval</b>. You give them a role here and they are in, on every device. Nothing has to be created by hand in the Firebase console.</p>
             ${pending.length ? `<div class="banner banner-warn" style="margin:0 0 12px">
@@ -921,7 +921,7 @@
               ${Sync.state.lastError ? `<div class="banner banner-warn small">${esc(Sync.state.lastError)}</div>` : ''}
               <div class="row-actions">
                 <button class="nm-btn" id="sync-now">Sync now</button>
-                <button class="nm-btn" id="backup-now">⬇ Download backup</button>
+                <button class="nm-btn" id="backup-now"><i class="i i-download"></i>Download backup</button>
               </div>
             </div>
             <div class="nm-card pad">

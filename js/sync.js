@@ -43,8 +43,9 @@
     let changed = 0;
     const local = Store.data[coll];
     for (const id of Object.keys(remote)) {
-      const r = remote[id];
-      if (!r || typeof r !== 'object') continue;
+      if (!remote[id] || typeof remote[id] !== 'object' || Array.isArray(remote[id])) continue;
+      const r = Store.clean(remote[id]);
+      if (r.id !== id) continue;            // a record must live under its own id
       const mine = local.find((x) => x.id === id);
       if (!mine) {
         local.push(r);
@@ -174,6 +175,7 @@
   async function syncNow(reason) {
     if (running) return;
     if (!window.Auth.current()) { set({ phase: 'signed-out' }); return; }
+    if (window.Auth.current().mode === 'preview' || Store.space === 'demo') return;   // the demo never syncs
     if (navigator.onLine === false) { set({ phase: 'offline' }); return; }
 
     running = true;

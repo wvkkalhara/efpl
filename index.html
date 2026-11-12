@@ -2,10 +2,14 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
   <title>EnerFab Biomass Storage</title>
   <meta name="description" content="Offline-first biomass bag tracking, bay storage and supplier payment system for EnerFab (Pvt) Ltd." />
-  <meta name="theme-color" content="#e8ece5" />
+  <meta name="theme-color" content="#f4f5f0" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="EFPL Biomass" />
   <meta name="color-scheme" content="light" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
   <link rel="manifest" href="manifest.webmanifest" />
@@ -30,17 +34,6 @@
   <script src="js/views-core.js"></script>
   <script src="js/views-stock.js"></script>
   <script src="js/views-money.js"></script>
-  <script>
-    (function () {
-      // Service worker gives us true offline start-up when the app is served
-      // over http(s). It is skipped silently where it is not allowed.
-      if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
-        window.addEventListener('load', function () {
-          navigator.serviceWorker.register('sw.js').catch(function () { /* preview sandbox */ });
-        });
-      }
-      window.addEventListener('load', function () { window.App.boot(); });
-    })();
-  </script>
+  <script src="js/boot.js"></script>
 </body>
 </html>

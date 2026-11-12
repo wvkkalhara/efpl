@@ -45,8 +45,9 @@ function headers(ext) {
       "default-src 'self'",
       "img-src 'self' data:",
       "style-src 'self' 'unsafe-inline'",
-      "script-src 'self' 'unsafe-inline'",
-      "connect-src 'self' https://*.firebaseio.com https://*.googleapis.com https://*.firebaseapp.com",
+      "script-src 'self' https://www.gstatic.com https://apis.google.com https://accounts.google.com",
+      "connect-src 'self' https://*.firebaseio.com wss://*.firebaseio.com https://*.googleapis.com https://*.firebaseapp.com",
+      "frame-src https://*.firebaseapp.com https://accounts.google.com",
       "form-action 'self'",
       "base-uri 'self'",
     ].join('; '),
@@ -54,26 +55,48 @@ function headers(ext) {
   };
 }
 
-const server = http.createServer((req, res) => {
-  const urlPath = decodeURIComponent((req.url || '/').split('?')[0]);
-  let rel = urlPath === '/' ? 'index.html' : urlPath.replace(/^\/+/, '');
-  const target = path.resolve(ROOT, rel);
+// Only real app files are served: never dotfiles (.git, .env), and never
+// the project's own tooling, docs or tests.
+const BLOCKED = new Set(['server.js', 'build.js', 'package.json', 'package-lock.json', 'firebase.json',
+  'firebase.rules.json', 'node_modules', 'tests', 'docs', '_headers', '_redirects']);
 
-  // path traversal guard
-  if (!target.startsWith(ROOT)) {
-    res.writeHead(403, headers('.txt'));
-    return res.end('Forbidden');
+function deny(res, code, text) {
+  res.writeHead(code, headers('.txt'));
+  res.end(text);
+}
+
+const server = http.createServer((req, res) => {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return deny(res, 405, 'Method not allowed');
+
+  let urlPath;
+  try {
+    urlPath = decodeURIComponent((req.url || '/').split('?')[0]);
+  } catch {
+    return deny(res, 400, 'Bad request');            // malformed %-encoding must not crash the server
   }
+  if (urlPath.includes('\0')) return deny(res, 400, 'Bad request');
+
+  const rel = urlPath === '/' ? 'index.html' : urlPath.replace(/^\/+/, '');
+  const parts = rel.split(/[\\/]+/);
+  if (parts.some((p) => p.startsWith('.')) || BLOCKED.has(parts[0])) return deny(res, 404, 'Not found');
+
+  const target = path.resolve(ROOT, rel);
+  // path traversal guard: the file must be inside ROOT itself, not merely
+  // in a sibling folder whose name starts the same way.
+  if (target !== ROOT && !target.startsWith(ROOT + path.sep)) return deny(res, 403, 'Forbidden');
+
   fs.stat(target, (err, stat) => {
-    if (err || !stat.isFile()) {
-      res.writeHead(404, headers('.txt'));
-      return res.end('Not found');
-    }
+    if (err || !stat.isFile()) return deny(res, 404, 'Not found');
     const ext = path.extname(target).toLowerCase();
     res.writeHead(200, Object.assign(headers(ext), { 'Content-Length': stat.size }));
-    fs.createReadStream(target).pipe(res);
+    if (req.method === 'HEAD') return res.end();
+    const stream = fs.createReadStream(target);
+    stream.on('error', () => res.destroy());
+    stream.pipe(res);
   });
 });
+
+server.on('clientError', (err, socket) => { try { socket.end('HTTP/1.1 400 Bad Request\r\n\r\n'); } catch { /* gone */ } });
 
 server.listen(PORT, HOST, () => {
   console.log(`EnerFab Biomass Storage on http://localhost:${PORT}`);

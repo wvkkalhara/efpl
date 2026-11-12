@@ -55,7 +55,7 @@ setTimeout(run, 30);
 
 function session(role = 'super_admin', email = 'w.v.k.kalhara@gmail.com') {
   window.localStorage.setItem('efpl.session.v1', JSON.stringify({
-    uid: 'u1', email, name: 'W. V. K. Kalhara', role, mode: 'offline',
+    uid: 'u1', email, name: 'W. V. K. Kalhara', role, mode: 'offline', ownerVerified: role === 'super_admin',
     signedInAt: new Date().toISOString(),
     rememberUntil: new Date(Date.now() + 864e5).toISOString(),
   }));
@@ -73,7 +73,12 @@ function run() {
   results.push('\nBOOT');
   check('app object mounted', () => !!App && typeof App.render === 'function');
   check('localStorage usable', () => Store.persistence === 'localStorage');
-  check('demo history seeded', () => Store.all('suppliers').length === 8 && Store.all('bags').length === 1200);
+  check('live store starts with no demo records', () => Store.space === 'live' && Store.all('suppliers').length === 0);
+  // The rest of the suite runs against the sandboxed demo store.
+  Store.useSpace('demo');
+  window.Seed.ensure();
+  Auth.init();
+  check('demo history seeded (demo store only)', () => Store.space === 'demo' && Store.all('suppliers').length === 8 && Store.all('bags').length === 1200);
   check('super admin exists with owner role', () => {
     const u = Store.all('users').find((x) => x.email === 'w.v.k.kalhara@gmail.com');
     return u && u.role === 'super_admin';
@@ -292,8 +297,14 @@ function run() {
     return Domain.can({ role: 'pending' }, 'delivery.create') === false
       && Domain.can({ role: 'pending' }, 'report.read') === false;
   });
-  check('the owner is recognised even when Google hands back no role', () => {
-    return window.Auth.isSuper({ email: 'w.v.k.kalhara@gmail.com', role: 'pending' }) === true;
+  check('owner rights need a verified owner email, not just the address', () => {
+    const base = { email: 'w.v.k.kalhara@gmail.com', role: 'super_admin', mode: 'online' };
+    return window.Auth.isSuper(base) === false
+      && window.Auth.isSuper(Object.assign({}, base, { ownerVerified: true })) === true;
+  });
+  check('records are cleaned of markup and non-numbers on the way in', () => {
+    const c = window.Store.clean({ id: 'x', bags: '<b>1</b>', name: 'A<script>"' });
+    return c.bags === null && !/[<>"]/.test(c.name);
   });
   check('admins cannot mint another owner or a pending role', () => {
     const list = Domain.ASSIGNABLE_ROLES;

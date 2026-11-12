@@ -3,6 +3,34 @@
 All notable changes to the EnerFab Biomass Storage system.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.0] — 2026-11-12
+
+### Changed
+
+* **Feels like an installed app** — bottom tab bar and slide-up sheets on
+  phones, icon rail on tablets, full sidebar on desktop. The phone back gesture
+  closes dialogs first, then returns to the previous page. New visual style,
+  one consistent icon set, safe-area and touch fixes, modern scrollbars.
+* **Demo runs in its own sandbox** — the "Preview with demo data" session has a
+  separate local store that never syncs and cannot see real records. Demo
+  records are no longer seeded into the live store.
+
+### Security
+
+* Database rules now check each person's role: unapproved accounts get no
+  access, each role writes only the record types it uses, and nobody can raise
+  their own role.
+* Owner rights require a verified owner email.
+* All incoming records (forms, backups, cloud sync) are cleaned of HTML and
+  non-numeric numbers; inline scripts are blocked by the Content-Security-Policy.
+* Local server no longer serves dotfiles or tooling, and survives malformed URLs.
+
+### Added
+
+* Cloudflare Pages support: `_headers` (security headers) and `_redirects`
+  (keeps docs, tests and tooling off the public site). See
+  `docs/DEPLOY-CLOUDFLARE.md`.
+
 ## [1.0.0] — 2026-11-09
 
 First working release, built from the 15-point requirements document and the

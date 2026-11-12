@@ -52,12 +52,12 @@ Plus the owner controls: **pause/restore the whole service**, with the guarantee
 
 ## Signing in (no Firebase console needed)
 
-1. **You** tap *Continue with Google* and pick `w.v.k.kalhara@gmail.com` → you are recognised as **Super Admin** automatically, by email, on any device.
+1. **You** tap *Continue with Google* and pick `w.v.k.kalhara@gmail.com` → you are recognised as **Super Admin** automatically, on any device (your Google email is verified, which the app requires for owner rights).
 2. **Everyone else** taps the same button with their own Google account. Their account is created by Google, they appear in *Administration → Users & roles* as **Awaiting approval**, and you pick a role. Done.
 3. No Google account? *Create an account* on the sign-in screen makes an email/password login — which also lands in **Awaiting approval**.
 4. After the first successful sign-in, that device keeps working with **no connection at all** (90-day session + a PBKDF2-hashed offline password check).
 
-A freshly signed-in account has **no permissions whatsoever** until a role is assigned, so a stranger who finds the URL can create nothing but a request to be approved.
+A freshly signed-in account has **no permissions whatsoever** until a role is assigned. This is enforced by the database rules themselves, not just the screens, so a stranger who finds the URL can read and change nothing.
 
 ## Roles
 
@@ -134,10 +134,13 @@ Current result: **74 passed, 0 failed.**
 1. Publish `firebase.rules.json` in the Firebase console (Realtime Database → Rules).
 2. Make sure your web address is listed in Firebase → Authentication → Settings → **Authorized domains** (Firebase Hosting domains and `localhost` already are).
 3. **Administration → Business settings**: confirm Rs 300 / Rs 270 / 90 % / 20 kg with the signed supplier agreement.
-4. **Administration → Data & sync → Remove demo data**; set `allowLocalPreview: false`; rebuild.
+4. Create the real bays in **Bays & stock** (the live app starts empty; sample data lives only in the sandboxed demo). Optionally set `allowLocalPreview: false` to hide the demo button.
 5. Number the bags, print the labels, issue round 1, receive the first truck.
 
-Full detail: `docs/DEPLOY-FIREBASE.md`. With the Firebase CLI linked to this
+**Hosting on Cloudflare Pages (GitHub → Cloudflare):** no build step — see `docs/DEPLOY-CLOUDFLARE.md`.
+`_headers` and `_redirects` provide the security headers and keep docs/tooling off the public site.
+
+**Hosting on Firebase:** full detail in `docs/DEPLOY-FIREBASE.md`. With the Firebase CLI linked to this
 repository, deploying is one command:
 
 ```bash

@@ -1,0 +1,25 @@
+# Cloudflare Pages publishes every file in the repository. These rules keep
+# the project's tooling, tests, docs and config files off the public site by
+# sending any request for them back to the app. (Redirects are applied even
+# when a matching file exists.) The app itself only uses index.html, css/,
+# js/, assets/, sw.js and manifest.webmanifest.
+
+/docs/*                 /  302
+/tests/*                /  302
+/node_modules/*         /  302
+/.github/*              /  302
+/server.js              /  302
+/build.js               /  302
+/package.json           /  302
+/package-lock.json      /  302
+/firebase.json          /  302
+/firebase.rules.json    /  302
+/.firebaserc            /  302
+/.nvmrc                 /  302
+/.editorconfig          /  302
+/.gitignore             /  302
+/README.md              /  302
+/CHANGELOG.md           /  302
+/CONTRIBUTING.md        /  302
+/SECURITY.md            /  302
+/LICENSE                /  302
