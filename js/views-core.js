@@ -59,25 +59,48 @@
        without anyone weighing anything. A real weighing of the bay (a
        test bag at approval, the three bags at the gasifier) replaces the
        estimate from that moment on. */
+    /**
+     * What is in a bay, load by load. The bay holds what was put into it when
+     * loads were accepted (the bags per bay chosen then), less what went to
+     * the gasifier from it, oldest load first. This does NOT depend on bag
+     * serial numbers: a truck accepted without serials still fills its bays.
+     * (Serials, when they are captured, are tracked on top of this.)
+     */
+    bayLayers(bayId) {
+      const layers = [];
+      for (const d of Store.all('deliveries')) {
+        if (d.deleted || d.status !== 'ACCEPTED') continue;
+        for (const a of d.allocations || []) {
+          if (a.bayId !== bayId || !(Number(a.bags) > 0)) continue;
+          layers.push({ delivery: d, deliveryId: d.id, count: Number(a.bags), since: d.acceptedAt || d.deliveredAt || null });
+        }
+      }
+      layers.sort((a, b) => String(a.since || '').localeCompare(String(b.since || '')));
+      let out = 0;
+      for (const u of Store.all('usageRequests')) {
+        if (!u.deleted && u.status === 'CONSUMED' && u.bayId === bayId) out += Number(u.bags) || 0;
+      }
+      for (const l of layers) {            // first in, first out
+        if (out <= 0) break;
+        const take = Math.min(out, l.count);
+        l.count -= take;
+        out -= take;
+      }
+      return layers.filter((l) => l.count > 0);
+    },
+
     bayNow(bayOrId) {
       const bay = typeof bayOrId === 'string' ? Store.byId('bays', bayOrId) : bayOrId;
       if (!bay) return null;
       const s = Store.settings();
-      const bags = Store.where('bags', (b) => b.bayId === bay.id && b.status === 'STORED');
-      const groups = new Map();
-      for (const b of bags) {
-        const k = b.deliveryId || '';
-        if (!groups.has(k)) groups.set(k, { deliveryId: k, count: 0, since: b.deliveredAt || null });
-        const g = groups.get(k);
-        g.count++;
-        if (b.deliveredAt && (!g.since || b.deliveredAt < g.since)) g.since = b.deliveredAt;
-      }
+      const groups = VH.bayLayers(bay.id);
+      const count = groups.reduce((a, g) => a + g.count, 0);
       const measuredAt = bay.lastWeighKg && bay.lastWeighAt ? Date.parse(bay.lastWeighAt) : NaN;
       const loads = [];
       let kgSum = 0, kgN = 0, arrSum = 0, arrN = 0;
-      for (const g of groups.values()) {
-        const d = g.deliveryId ? Store.byId('deliveries', g.deliveryId) : null;
-        const since = g.since || (d && (d.acceptedAt || d.deliveredAt)) || null;
+      for (const g of groups) {
+        const d = g.delivery;
+        const since = g.since;
         const startKg = d && d.avgBagKg ? d.avgBagKg : null;
         // a weighing of the bay after this load came in is better than the estimate
         const useMeasured = Number.isFinite(measuredAt) && since && measuredAt > Date.parse(since);
@@ -94,10 +117,10 @@
       const estKg = kgN ? D.round2(kgSum / kgN) : null;
       const moisture = estKg ? D.moistureFromWeight(estKg, s) : null;
       const capacity = Number(bay.capacityBags) || 0;
-      const ready = moisture !== null && bags.length > 0 && moisture <= D.moistureReadyPct(s);
+      const ready = moisture !== null && count > 0 && moisture <= D.moistureReadyPct(s);
       return {
-        bay, count: bags.length, capacity,
-        pctFull: capacity ? Math.round((bags.length / capacity) * 100) : 0, over: capacity > 0 && bags.length > capacity,
+        bay, count, capacity,
+        pctFull: capacity ? Math.round((count / capacity) * 100) : 0, over: capacity > 0 && count > capacity,
         loads, estKg, moisture, band: D.moistureBand(moisture, s), ready,
         arrivalKg: arrN ? D.round2(arrSum / arrN) : null,
         oldestDays: loads.length ? Math.max.apply(null, loads.map((l) => l.days || 0)) : null,
@@ -134,7 +157,8 @@
     bayOptions() {
       return Store.where('bays', (b) => !b.deleted).map((b) => ({ value: b.id, label: `${b.code} — ${b.name}` }));
     },
-    bagsInBay(bayId) { return Store.where('bags', (b) => b.bayId === bayId && b.status === 'STORED').length; },
+    /** Bags in a bay now: accepted into it, less issued to the gasifier from it. */
+    bagsInBay(bayId) { return VH.bayLayers(bayId).reduce((a, l) => a + l.count, 0); },
     paymentFor(deliveryId) { return Store.all('payments').find((p) => p.deliveryId === deliveryId) || null; },
     deliveryFor(id) { return Store.byId('deliveries', id); },
 
@@ -338,7 +362,6 @@
     title: 'Dashboard',
     render(view) {
       const bags = Store.all('bags');
-      const stored = bags.filter((b) => b.status === 'STORED');
       const deliveries = Store.all('deliveries');
       const accepted = deliveries.filter((d) => d.status === 'ACCEPTED');
       const last30 = accepted.filter((d) => Date.now() - Date.parse(d.acceptedAt || d.deliveredAt) < 30 * 864e5);
@@ -364,7 +387,9 @@
       const alerts = VH.myTasks();
 
       const capacity = bays.reduce((a, b) => a + (b.capacityBags || 0), 0);
-      const yardPct = capacity ? Math.min(100, Math.round((stored.length / capacity) * 100)) : 0;
+      // in the yard = what the bays hold (serials or not)
+      const inYard = bays.reduce((a, b) => a + b.count, 0);
+      const yardPct = capacity ? Math.min(100, Math.round((inYard / capacity) * 100)) : 0;
 
       view.innerHTML = `
         <section class="hero nm-card">
@@ -381,7 +406,7 @@
           </div>
           <div class="hero-yard">
             <span class="hero-yard-label">In the yard now</span>
-            <strong class="hero-yard-value">${stored.length.toLocaleString()}<small>bags</small></strong>
+            <strong class="hero-yard-value">${inYard.toLocaleString()}<small>bags</small></strong>
             <div class="meter on-dark"><span style="width:${yardPct}%"></span></div>
             <span class="hero-yard-sub">${yardPct}% of ${capacity.toLocaleString()} bag capacity, ${bays.filter((b) => b.count > 0).length} of ${bays.length} bays in use</span>
           </div>
@@ -1159,7 +1184,7 @@
             `${d.receiptNo} accepted · ${d.bagCount} bags · ${allocs.map((a) => `${a.bayCode}:${a.bags}`).join(', ')} · ${money(payment.netAmount)}${m.deductionPct ? ` · ${m.deductionPct}% deducted (${deductionReason})` : ''}`);
           VH.audit('payment.create', 'payment', payment.id, `${paymentNo} created for ${sup.name} · ${money(payment.netAmount)}`);
 
-          UI.toast(`Accepted. ${attached} bag serials stored, payment ${paymentNo} created`, 'ok', 5000);
+          UI.toast(`Accepted. ${d.bagCount} bags stored: ${allocs.map((a) => `${a.bayCode} ${a.bags}`).join(', ')}.${attached ? ` ${attached} bag serials recorded.` : ''} Payment ${paymentNo} created.`, 'ok', 6000);
           if (unknown.length) UI.toast(`${unknown.length} serial(s) are not in the bag registry and were skipped`, 'warn', 6000);
           if (busy.length) UI.toast(`${busy.length} serial(s) are already in a bay or in use and were skipped (first: ${busy[0]})`, 'warn', 7000);
           close();
@@ -1189,12 +1214,11 @@
         <tr><th>Biomass</th><td>${o.biomassType ? esc(VH.typeLabel(o.biomassType)) : blank}</td><th>Date and time</th><td>${blank}</td></tr>
         <tr><th>Bags counted</th><td>${count || blank}</td><th>Sample (${esc(s.sampleSizePct)}% of the bags)</th><td>${count ? `${sample} bags` : blank}</td></tr>
       </table>
-      <p class="meta">Empty each sample bag into the measuring drum and write the fill height as a percentage of the drum. Every box must be filled: the app needs all of the ${esc(s.sampleSizePct)}% sample. Agreement: ${esc(s.fillThresholdPct)}% average for the full price of Rs ${esc(s.unitPrice)}; below that, Rs ${esc(s.reducedUnitPrice)} per bag.</p>
+      <p class="meta">Empty each sample bag into the measuring drum and write the fill height as a percentage of the drum. ${count
+        ? `Fill all ${sample} boxes: the app needs the whole ${esc(s.sampleSizePct)}% sample.`
+        : `Fill one box for each sample bag: ${esc(s.sampleSizePct)}% of the bags, rounded up (for example 120 bags = 6 boxes). The app needs all of them.`}
+        Agreement: ${esc(s.fillThresholdPct)}% average for the full price of Rs ${esc(s.unitPrice)}; below that, Rs ${esc(s.reducedUnitPrice)} per bag. The app works out the average.</p>
       <div class="fill-sheet">${boxes}</div>
-      <table style="margin-top:6mm">
-        <tr><th>Total of all readings</th><td>${blank}</td><th>Average (total ÷ ${count ? sample : 'number of bags'})</th><td>${blank}</td></tr>
-        <tr><th>Remarks</th><td colspan="3" style="height:16mm"></td></tr>
-      </table>
       <div style="display:flex;gap:20mm;margin-top:10mm">
         <div class="sign">Measured by</div><div class="sign">Supplier or driver</div><div class="sign">Biomass supervisor</div>
       </div>`;
@@ -1280,26 +1304,42 @@
   };
 
   /** Sticker sheet: one label per bag, with the serial as a barcode. */
+  /**
+   * Bag labels, as agreed on site: the serial and its barcode, and a box
+   * where the supplier writes their number by hand. Nothing else is printed,
+   * so the same bag can go to a different supplier next round.
+   */
+  const LABELS_PER_PRINT = 1000;
+  VH.printLabelSheet = function (serials, title) {
+    const list = (serials || []).filter(Boolean);
+    if (!list.length) { UI.toast('There are no bag serials to print', 'warn'); return false; }
+    if (list.length > LABELS_PER_PRINT) {
+      UI.toast(`${list.length.toLocaleString()} labels is too many for one print. Print them in parts of up to ${LABELS_PER_PRINT.toLocaleString()} (choose a range).`, 'warn', 7000);
+      return false;
+    }
+    const sheet = list.map((sn) => `
+      <div class="sticker">
+        <div class="co"><img class="sticker-logo" src="assets/enerfab-logo.png" alt="" />EnerFab Biomass</div>
+        <div class="serial">${esc(sn)}</div>
+        ${D.code39SVG(String(sn).replace(/[^A-Z0-9-]/gi, ''), { height: 34, narrow: 1.6, quiet: 6 })}
+        <div class="write">Supplier no: _______________________</div>
+      </div>`).join('');
+    UI.print(`<div class="sheet">${sheet}</div>`, title || 'Bag labels');
+    return true;
+  };
+
+  /** Labels for the bags that came in on one load (only bags with serials). */
   App.printLabels = function (id) {
     const d = Store.byId('deliveries', id);
     if (!d) return;
-    const sup = Store.byId('suppliers', d.supplierId) || {};
-    const s = Store.settings();
-    let serials = d.serials && d.serials.length ? d.serials : [];
+    const serials = d.serials && d.serials.length ? d.serials : [];
     if (!serials.length) {
-      serials = Array.from({ length: Math.min(d.bagCount || 12, 48) }, (_, i) => `${s.bagSerialPrefix}-(new ${i + 1})`);
+      UI.toast('This load was received without bag serials, so there are no labels to reprint. New labels are printed when bags are numbered (Bag registry → Number new bags).', 'warn', 8000);
+      return;
     }
-    const sheet = serials.slice(0, 96).map((sn) => `
-      <div class="sticker">
-        <div class="co"><img class="sticker-logo" src="assets/enerfab-logo.png" alt="" />EnerFab Biomass</div>
-        <div class="serial">${esc(String(sn).replace('(new ', '').replace(')', ''))}</div>
-        ${D.code39SVG(String(sn).replace(/[^A-Z0-9-]/gi, ''), { height: 34, narrow: 1.6, quiet: 6 })}
-        <div class="sub">Supplier: <b>${esc(sup.code || '')}</b></div>
-        <div class="sub">Receipt: <b>${esc(d.receiptNo)}</b></div>
-        <div class="write">Supplier no: _______________________</div>
-      </div>`).join('');
-    UI.print(`<div class="sheet">${sheet}</div>`, `Bag labels ${d.receiptNo}`);
-    VH.audit('delivery.labels', 'delivery', d.id, `${serials.length} bag labels printed`);
+    if (VH.printLabelSheet(serials, `Bag labels ${d.receiptNo}`)) {
+      VH.audit('delivery.labels', 'delivery', d.id, `${serials.length} bag labels printed`);
+    }
   };
 
   /* ------------------------------- TRACE ----------------------------- */

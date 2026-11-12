@@ -3,13 +3,13 @@
    Cache-first for the shell so the app opens with no signal at all;
    network-first for Firebase (which the sync engine calls directly).
    ===================================================================== */
-const VERSION = 'efpl-biomass-v1.5.2';
+const VERSION = 'efpl-biomass-v1.6.1';
 const SHELL = [
   './', './index.html', './manifest.webmanifest',
   './css/app.css',
   './js/config.js', './js/store.js', './js/domain.js', './js/firebase.js',
   './js/auth.js', './js/sync.js', './js/ui.js', './js/seed.js', './js/app.js',
-  './js/views-core.js', './js/views-stock.js', './js/views-money.js', './js/boot.js',
+  './js/views-core.js', './js/views-stock.js', './js/views-money.js', './js/tutorial.js', './js/boot.js',
   './assets/enerfab-logo.png',
 ];
 

@@ -111,7 +111,7 @@
             <p>${badge(D.PAYMENT_LABEL[p.status] || p.status, UI.statusTone(p.status))}</p>
             <h4>History</h4>
             <ul class="mini-timeline">
-              ${(p.history || []).map((h) => `<li><b>${esc(h.action.replace(/_/g, ' '))}</b><span class="muted small">${esc(dt(h.at))} · ${esc(h.by)}</span>${h.note ? `<div class="small">${esc(h.note)}</div>` : ''}</li>`).join('') || '<li class="muted">No history.</li>'}
+              ${(p.history || []).map((h) => `<li><b>${esc(D.paymentActionLabel(h.action))}</b><span class="muted small">${esc(dt(h.at))} · ${esc(h.by)}</span>${h.note ? `<div class="small">${esc(h.note)}</div>` : ''}</li>`).join('') || '<li class="muted">No history.</li>'}
             </ul>
           </div>
         </div>`,
@@ -237,7 +237,7 @@
       </table>
       <h2>Authorisation trail</h2>
       <table><thead><tr><th>When</th><th>Who</th><th>Action</th><th>Note</th></tr></thead>
-        <tbody>${(p.history || []).map((h) => `<tr><td>${esc(dt(h.at))}</td><td>${esc(h.by)}</td><td>${esc(h.action)}</td><td>${esc(h.note || '')}</td></tr>`).join('')}</tbody></table>
+        <tbody>${(p.history || []).map((h) => `<tr><td>${esc(dt(h.at))}</td><td>${esc(h.by)}</td><td>${esc(D.paymentActionLabel(h.action))}</td><td>${esc(h.note || '')}</td></tr>`).join('')}</tbody></table>
       <div style="display:flex;gap:20mm;margin-top:14mm">
         <div class="sign">Prepared by</div><div class="sign">Biomass supervisor</div><div class="sign">Head Office accounts</div>
       </div>`;
@@ -1170,9 +1170,18 @@
                 <button class="nm-btn" id="import-merge">Import (merge)</button>
               </div>
               <div class="divider"></div>
-              <p class="small t-danger"><b>Danger zone.</b> These actions cannot be undone on this device.</p>
+              <h4>Fix this device</h4>
+              <p class="muted small">Throws away this device's copy and downloads it again from the cloud. <b>Nothing is deleted</b> anywhere. Use it if this device shows something different from the others.</p>
               <div class="row-actions">
-                <button class="nm-btn danger" id="wipe-all">Reset this device</button>
+                <button class="nm-btn" id="redownload">Re-download this device</button>
+              </div>
+              <div class="divider"></div>
+              <div class="danger-zone">
+                <p class="small t-danger"><b>Danger zone</b></p>
+                ${Auth.isSuper(Auth.current()) && (Auth.current() || {}).mode !== 'preview' ? `
+                  <p class="small">Delete <b>every record</b> in the cloud and on <b>every device</b>: deliveries, payments, bags, suppliers, gasifier issues, quality issues and returns. Kept: staff accounts, business settings (prices, moisture), the list of bays (they become empty) and the activity log. A backup file is downloaded first. This cannot be undone.</p>
+                  <div class="row-actions"><button class="nm-btn danger" id="wipe-all">Delete all records everywhere</button></div>`
+                  : '<p class="muted small">Deleting all records is kept for the owner of the system.</p>'}
               </div>
             </div>
           </section>`,
@@ -1413,17 +1422,43 @@
             reader.readAsText(file);
           });
 
-          body.querySelector('#wipe-all').addEventListener('click', async () => {
+          body.querySelector('#redownload').addEventListener('click', async (e) => {
+            if ((Auth.current() || {}).mode === 'preview') return UI.toast('Not in the demo', 'warn');
             const ok = await UI.confirm({
-              title: 'Reset this device?',
-              message: 'Every record on this device is cleared. Staff accounts are kept. This cannot be undone — download a backup first if you are not sure.',
-              confirmText: 'Reset device', requireText: 'RESET',
+              title: 'Re-download this device?',
+              message: 'This device\'s copy is replaced with the one in the cloud. Nothing is deleted anywhere.',
+              confirmText: 'Re-download', tone: 'primary',
             });
             if (!ok) return;
-            Store.resetAll({ keepUsers: true });
-            UI.toast('This device has been reset', 'ok');
+            const btn = e.target.closest('button');
+            btn.disabled = true; btn.textContent = 'Downloading…';
+            try {
+              const phase = await Sync.redownload();
+              UI.toast(phase === 'ok' ? 'This device is up to date with the cloud' : 'Cleared. It downloads again as soon as there is a connection', phase === 'ok' ? 'ok' : 'warn', 6000);
+            } catch (err) { UI.toast(err.message, 'danger', 7000); }
             App.refresh();
-            show('data');
+          });
+
+          const wipe = body.querySelector('#wipe-all');
+          if (wipe) wipe.addEventListener('click', async () => {
+            const counts = ['deliveries', 'payments', 'bags', 'suppliers'].map((c) => `${Store.all(c).length} ${c}`).join(', ');
+            const ok = await UI.confirm({
+              title: 'Delete all records everywhere?',
+              message: `This deletes ${counts} and everything else recorded, in the cloud and on every phone, tablet and computer. Staff, settings, the bay list and the activity log are kept. A backup file is downloaded first. It cannot be undone.`,
+              confirmText: 'Delete everything', requireText: 'DELETE EVERYTHING',
+            });
+            if (!ok) return;
+            // a copy first, always
+            UI.download(`enerfab-biomass-backup-before-delete-${D.todayISO()}.json`, JSON.stringify(App.exportData(), null, 2));
+            wipe.disabled = true; wipe.textContent = 'Deleting…';
+            try {
+              const res = await Sync.wipeEverywhere();
+              VH.audit('data.wipe', 'data', 'all', `All records deleted everywhere (${res.removed} on this device). Backup downloaded first.`);
+              UI.toast('All records deleted, here and on every device. A backup was downloaded first.', 'ok', 7000);
+            } catch (err) {
+              UI.toast(err.message, 'danger', 9000);
+            }
+            App.refresh();
           });
         }
       };

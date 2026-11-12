@@ -32,6 +32,10 @@
     'suppliers', 'farmers', 'bags', 'bagIssues', 'deliveries', 'bays',
     'usageRequests', 'qualityIssues', 'payments', 'bagReturns',
   ];
+  // What the owner's "Delete all records everywhere" clears. Kept: staff,
+  // business settings, the bay list (bays empty themselves, since what is in
+  // a bay comes from the deliveries) and the activity log (append-only).
+  const WIPED = SYNCED.filter((c) => c !== 'bays');
   const AUDIT_PATH = 'auditLog';
   const CHUNK = 400;                 // records per upload request
   const FULL_PULL_EVERY_MS = 120000; // background pulls of the whole yard are spaced out
@@ -65,6 +69,8 @@
   let started = false;
 
   const stamp = (r) => Date.parse((r && r.updatedAt) || 0) || 0;
+  /** A date string as milliseconds; no date is 0 (note: Date.parse(0) is the year 2000). */
+  const ms = (s) => (typeof s === 'string' && s ? Date.parse(s) || 0 : 0);
   const isRefusal = (err) => err && (err.status === 401 || err.status === 403 || err.code === 'PERMISSION_DENIED' || err.code === 'UNAUTHORIZED');
   const isExpiredToken = (err) => isRefusal(err) && /expired|invalid.*token|could not parse auth token/i.test(err.detail || '');
   const Auth = () => window.Auth;
@@ -81,10 +87,13 @@
     let changed = 0;
     const local = Store.data[coll];
     const byId = new Map(local.map((x) => [x.id, x]));
+    // after the owner cleared the records, nothing made before that may come back
+    const wipeAt = WIPED.includes(coll) ? ms(Store.data.meta.wipeSeenAt) : 0;
     for (const id of Object.keys(remote)) {
       if (!remote[id] || typeof remote[id] !== 'object' || Array.isArray(remote[id])) continue;
       const r = Store.normalize(coll, Store.clean(remote[id]));
       if (r.id !== id) continue;            // a record must live under its own id
+      if (wipeAt && ms(r.createdAt) <= wipeAt) continue;
       const mine = byId.get(id);
       if (!mine) {
         local.push(r);
@@ -262,6 +271,8 @@
           window.dispatchEvent(new CustomEvent('efpl:data-changed', { detail: { config: true } }));
         }
       }
+      // the owner cleared the records everywhere: this device follows
+      if (cfg && cfg.wipe && typeof cfg.wipe.at === 'string') applyWipe(cfg.wipe);
       if (cfg && cfg.subscription && typeof cfg.subscription.status === 'string') {
         const local = Store.data.config.subscription;
         const remoteUpdated = Date.parse(cfg.subscription.updatedAt || 0) || 0;
@@ -278,6 +289,17 @@
       if (isExpiredToken(err)) throw err;
       /* configuration is optional on first run */
     }
+  }
+
+  /** Clear this device's copy once for each clear-out the owner made. */
+  function applyWipe(wipe) {
+    const at = ms(wipe.at);
+    const seen = ms(Store.data.meta.wipeSeenAt);
+    if (!at || at <= seen) return false;
+    const removed = Store.wipeRecords(WIPED, wipe.at);
+    window.dispatchEvent(new CustomEvent('efpl:data-changed', { detail: { wipe: true } }));
+    window.dispatchEvent(new CustomEvent('efpl:wiped', { detail: { at: wipe.at, by: wipe.by || '', removed } }));
+    return true;
   }
 
   /* ------------------------------ push ------------------------------- */
@@ -749,6 +771,52 @@
       if (!token || navigator.onLine === false) throw new Error('Saved on this device. Connect to the internet so it reaches the other devices.');
       await FB.patch(`${CFG.configPath}/remote`, Store.data.config.remote, token);
       return Store.data.config.remote;
+    },
+
+    /**
+     * Owner only: delete the records in the cloud and on every device.
+     *   1. delete them in the cloud (one request: all or nothing);
+     *   2. leave the "cleared at" mark, which tells every other device to
+     *      clear its copy and never take back anything made before it;
+     *   3. delete once more, in case a device uploaded in between;
+     *   4. clear this device and wake the others.
+     * Errors say exactly how far it got.
+     */
+    async wipeEverywhere() {
+      const me = Auth().current();
+      if (!Auth().isSuper(me)) throw new Error('Only the owner can delete the records');
+      if (me.mode === 'preview' || Store.space === 'demo') throw new Error('Not in the demo');
+      if (navigator.onLine === false) throw new Error('No connection. Connect to the internet, then try again: the records have to be deleted in the cloud.');
+      const token = await Auth().idToken();
+      if (!token) throw new Error('Sign in again, then try again.');
+      const at = new Date().toISOString();
+      const wipe = { at, by: me.email || '' };
+      const nothing = Object.fromEntries(WIPED.map((c) => [c, null]));
+      try { await FB.patch(CFG.syncPath, nothing, token); } catch (err) {
+        throw new Error(`Nothing was deleted. ${err.code === 'NETWORK' ? 'The connection dropped.' : err.message} Try again.`);
+      }
+      try { await FB.patch(CFG.configPath, { wipe }, token); } catch (err) {
+        throw new Error('The records were deleted in the cloud, but the other devices could not be told yet, so they still show their copy. Press the button again to finish.');
+      }
+      try { await FB.patch(CFG.syncPath, nothing, token); } catch { /* the mark already stops old records coming back */ }
+      const removed = Store.wipeRecords(WIPED, at);
+      try { await FB.patch(CFG.syncPath, { pulse: { at, by: Store.data.meta.deviceId } }, token); } catch { /* the others find out at their next check */ }
+      window.dispatchEvent(new CustomEvent('efpl:data-changed', { detail: { wipe: true } }));
+      return { at, removed };
+    },
+
+    /**
+     * Anyone who manages data: throw away this device's copy and download it
+     * again from the cloud. Nothing is deleted anywhere. Refused while this
+     * device still has changes the cloud has not received.
+     */
+    async redownload() {
+      const pending = (Store.data.outbox || []).length;
+      if (pending) throw new Error(`${pending} change${pending === 1 ? ' has' : 's have'} not reached the cloud yet. Sync first (connect to the internet), then try again.`);
+      Store.resetAll({ keepUsers: true });
+      state.lastPullAt = 0;
+      await syncNow('manual');
+      return state.phase;
     },
 
     /** Super admin only: publish the subscription switch to every device. */

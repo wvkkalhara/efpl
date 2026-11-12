@@ -3,6 +3,99 @@
 All notable changes to the EnerFab Biomass Storage system.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.6.1] — 2026-11-13
+
+A full check of every screen for every role, every print and every main
+flow (receive → accept → authorise → release → paid, gasifier request →
+approve → consume, numbering and issuing bags, quality, returns, suppliers,
+settings). What it found is fixed here.
+
+### Changed
+
+* **Fill check sheet:** the "Total of all readings / Average / Remarks" box is
+  gone; the app works out the average. A blank sheet (no bag count yet) now
+  says how many boxes to fill (5 % of the bags, rounded up).
+* **Bag labels follow the site agreement:** the serial, its barcode and the
+  "Supplier no" box to write in. The supplier code and receipt number are no
+  longer pre-printed, so a bag can go to another supplier next round.
+* **Print labels for numbered bags.** After numbering a batch the label
+  print opens straight away, and the Bag registry has a Print labels button
+  for any range of serials (up to 1,000 per print).
+* The Bag registry's "In bays" figure is now "Numbered bags in bays", since
+  the bays also hold bags without serials.
+
+### Fixed
+
+* **The bag allocation slip left out bags:** a 300-bag round listed only 240.
+  Every bag issued is now listed.
+* **Labels stopped at 96:** a 160-bag load printed 96 labels. Every bag now
+  gets one.
+* **A load without serials printed made-up labels** (EFPL-BG-1, -2 …) with
+  barcodes for bags that do not exist. It now explains that there is nothing
+  to reprint and where new labels come from.
+* **The payment history showed codes** (CREATED, SENT_TO_HEAD_OFFICE) on the
+  payment dialog and the printed slip. It now reads Created, Authorised,
+  Released to Head Office, Paid.
+
+## [1.6.0] — 2026-11-13
+
+### Added
+
+* **Training academy.** A guided, game-like training for every person,
+  built from what their role can do (a role the administrator has customised
+  gets the matching missions too). Up to 11 missions: Welcome, Receive a
+  truck, Accept a load into the bays, Bays and drying, Feed the gasifier,
+  Bags and labels, Trace and quality, Pay the suppliers, Suppliers, Reports,
+  Run the system, and a read-only mission for the auditor.
+  - A glowing spotlight on the real button or screen, with a short card that
+    explains it; some steps ask the person to tap the lit-up button.
+  - Points (XP), a rank that grows with the share of missions done (New
+    starter → Yard master), a badge per mission, a celebration when a mission
+    is finished, and a printable certificate when they are all done.
+  - Any device: a card beside the spotlight on a computer or tablet; on a
+    phone a sheet at the bottom (or top), with the page scrolled so the lit-up
+    part is never under it. The words say "tap" or "click" to match, and
+    screens that live under "More" on a phone are shown there.
+  - Safe: training only shows and opens things. It never saves a record.
+  - Offered once after the first sign-in (Start training / Later), and
+    always available again: account menu → Training, My account, the phone's
+    More menu, and the new Training screen (Help), where any mission can be
+    replayed and progress started again.
+
+### Changed
+
+* **The danger zone now really deletes.** "Reset this device" only cleared
+  the device it was pressed on, and the app downloaded everything again from
+  the cloud a moment later, so it looked as if nothing happened. Now:
+  - **Delete all records everywhere** (owner only): deliveries, payments,
+    bags, suppliers, gasifier issues, quality issues, returns and bag rounds
+    are deleted in the cloud and on every device. Kept: staff accounts,
+    business settings, the bay list (now empty) and the activity log (which
+    records who did it). A backup file downloads first, and the words
+    DELETE EVERYTHING must be typed. Other devices clear themselves the
+    moment they hear of it, keep anything typed offline after it, and a
+    device that was switched off can never bring the old records back.
+    Numbering starts again at 0001. No change to the database rules needed.
+  - **Re-download this device** (for fixing one device): replaces this
+    device's copy with the cloud's; nothing is deleted anywhere, and it
+    refuses while this device still has changes waiting to upload.
+
+### Fixed
+
+* **Bays showed 0 bags after a truck was accepted.** A bay only counted bags
+  whose serial numbers were typed in at acceptance and already existed in the
+  bag registry, so a truck accepted without serials ("0 bag serials stored")
+  left its bays empty. A bay now holds what was put into it at acceptance,
+  less what went to the gasifier from it, oldest load first; serials are
+  tracked on top when they are captured. Loads accepted earlier appear in
+  their bays straight away, because every accepted delivery kept its bay
+  split. "In the yard now" on the dashboard counts the same way.
+* **The gasifier issued 0 bags from a bay with no numbered bags.** Weigh and
+  consume now takes the requested bags from the bay's count, and marks
+  numbered bags as used only when there are some.
+* The acceptance message now says how many bags went into which bays
+  ("60 bags stored: BAY-20 60") instead of "0 bag serials stored".
+
 ## [1.5.2] — 2026-11-13
 
 ### Fixed

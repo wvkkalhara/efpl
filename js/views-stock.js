@@ -34,7 +34,7 @@
         <section class="stats stats-4">
           ${UI.stat('Numbered bags in store', (counts.IN_STOCK || 0).toLocaleString(), 'ready to issue')}
           ${UI.stat('With suppliers', (counts.ISSUED || 0).toLocaleString(), 'out on a filling round', counts.ISSUED ? 'warn' : null)}
-          ${UI.stat('In bays', (counts.STORED || 0).toLocaleString(), 'filled and stored')}
+          ${UI.stat('Numbered bags in bays', (counts.STORED || 0).toLocaleString(), 'bags with a serial; the bays also hold bags without one')}
           ${UI.stat('Emptied, awaiting check', `${((counts.CONSUMED || 0) + (counts.RETURNED || 0)).toLocaleString()}`, `${counts.DAMAGED || 0} damaged`, counts.DAMAGED ? 'warn' : null)}
         </section>
 
@@ -48,6 +48,7 @@
           </div>
           <div class="toolbar-right">
             ${Auth.can('bag.generate') ? '<button class="nm-btn" id="gen-bags"><i class="i i-plus"></i>Number new bags</button>' : ''}
+            ${(Auth.can('bag.generate') || Auth.can('bag.issue')) && bags.length ? '<button class="nm-btn" id="print-bag-labels"><i class="i i-printer"></i>Print labels</button>' : ''}
             ${Auth.can('bag.issue') ? '<button class="nm-btn primary" id="issue-bags">Issue to supplier</button>' : ''}
           </div>
         </div>
@@ -95,6 +96,8 @@
 
       const gen = view.querySelector('#gen-bags');
       if (gen) gen.addEventListener('click', () => App.generateBags());
+      const lbl = view.querySelector('#print-bag-labels');
+      if (lbl) lbl.addEventListener('click', () => App.printBagLabels());
       const issue = view.querySelector('#issue-bags');
       if (issue) issue.addEventListener('click', () => App.issueBags());
     },
@@ -136,10 +139,67 @@
             if (existing.has(serial)) continue;
             records.push({ serial, status: 'IN_STOCK', condition: 'GOOD', batchStart: D.bagSerial(prefix, maxN + 1) });
           }
+          if (!records.length) { UI.toast('Those serials already exist', 'warn'); return; }
           Store.bulkAdd('bags', records, 'bag-generate');
-          VH.audit('bag.generate', 'bags', 'batch', `${records.length} bags numbered ${records[0].serial} … ${records[records.length - 1].serial}`);
+          const first = records[0].serial;
+          const last = records[records.length - 1].serial;
+          VH.audit('bag.generate', 'bags', 'batch', `${records.length} bags numbered ${first} … ${last}`);
           UI.toast(`${records.length.toLocaleString()} bags numbered`, 'ok');
           close(); App.refresh();
+          // the next job is the stickers: offer them straight away
+          setTimeout(() => App.printBagLabels(first, last), 260);
+        });
+      },
+    });
+  };
+
+  /**
+   * Print the stickers for a run of serials (from … to). Opened after
+   * numbering a batch, and from the Bag registry for a reprint.
+   */
+  App.printBagLabels = function (fromSerial, toSerial) {
+    const s = Store.settings();
+    const all = Store.all('bags').slice().sort((a, b) => (D.parseSerialNumber(a.serial) || 0) - (D.parseSerialNumber(b.serial) || 0));
+    if (!all.length) return UI.toast('No bags are numbered yet', 'warn');
+    const lastBatch = all[all.length - 1].batchStart || all[0].serial;
+    const from0 = fromSerial || lastBatch;
+    const to0 = toSerial || all[all.length - 1].serial;
+    UI.modal({
+      title: 'Print bag labels',
+      size: 'sm',
+      body: `<div class="form-errors" role="alert"></div>
+        <p class="muted small">One sticker per bag: the serial, its barcode and a box for the supplier number. Up to ${(1000).toLocaleString()} labels per print.</p>
+        <div class="grid-2">
+          ${UI.field('From serial', UI.input('from', { value: from0 }))}
+          ${UI.field('To serial', UI.input('to', { value: to0 }))}
+        </div>
+        <div class="calc-strip" id="lbl-count"></div>`,
+      footer: '<button class="nm-btn" data-close>Later</button><button class="nm-btn primary" data-act="print"><i class="i i-printer"></i>Print labels</button>',
+      onMount(el, close) {
+        const pick = () => {
+          const a = D.parseSerialNumber(String(el.querySelector('[name=from]').value).trim().toUpperCase(), s.bagSerialPrefix);
+          const b = D.parseSerialNumber(String(el.querySelector('[name=to]').value).trim().toUpperCase(), s.bagSerialPrefix);
+          if (!a || !b) return { list: [], err: 'Type two serials, for example ' + D.bagSerial(s.bagSerialPrefix, 1) };
+          const lo = Math.min(a, b), hi = Math.max(a, b);
+          return { list: all.filter((x) => { const n = D.parseSerialNumber(x.serial); return n >= lo && n <= hi; }).map((x) => x.serial) };
+        };
+        const show = () => {
+          const r = pick();
+          el.querySelector('#lbl-count').innerHTML = r.err ? `<span class="t-warn">${esc(r.err)}</span>`
+            : `<div><span class="muted small">Labels</span><b>${r.list.length.toLocaleString()}</b></div>${r.list.length > 1000 ? '<div class="t-warn small">More than 1,000: print in parts</div>' : ''}`;
+        };
+        el.querySelectorAll('input').forEach((i) => i.addEventListener('input', show));
+        show();
+        el.querySelector('[data-act=print]').addEventListener('click', () => {
+          const r = pick();
+          if (r.err) return UI.showErrors(el, [r.err]);
+          if (!r.list.length) return UI.showErrors(el, ['No numbered bags in that range']);
+          close();
+          setTimeout(() => {
+            if (VH.printLabelSheet(r.list, `Bag labels ${r.list[0]} to ${r.list[r.list.length - 1]}`)) {
+              VH.audit('bag.labels', 'bags', 'labels', `${r.list.length} labels printed ${r.list[0]} … ${r.list[r.list.length - 1]}`);
+            }
+          }, 260);
         });
       },
     });
@@ -208,14 +268,16 @@
     if (!issue) return;
     const sup = Store.byId('suppliers', issue.supplierId) || {};
 
-    const list = issue.serials;
+    const list = issue.serials || [];
+    // every bag issued is listed, in two columns (left column first)
+    const half = Math.ceil(list.length / 2);
     const html = `${VH.printHeader('Bag allocation slip', `Round ${issue.roundNo} · ${sup.code} ${sup.name} · ${dt(issue.issuedAt)}`)}
       <p class="meta">${list.length} numbered bags issued. Every bag carries the serial below. Please write your <b>supplier number</b> in the box on the bag tag before delivering.</p>
       <table><thead><tr><th>#</th><th>Serial</th><th>Returned (tick)</th><th>#</th><th>Serial</th><th>Returned (tick)</th></tr></thead>
-        <tbody>${Array.from({ length: Math.ceil(Math.min(list.length, 240) / 2) }, (_, i) => `
+        <tbody>${Array.from({ length: half }, (_, i) => `
           <tr><td>${i + 1}</td><td class="mono">${esc(list[i])}</td><td></td>
-              <td>${i + 1 + Math.ceil(Math.min(list.length, 240) / 2)}</td>
-              <td class="mono">${esc(list[i + Math.ceil(Math.min(list.length, 240) / 2)] || '')}</td><td></td></tr>`).join('')}
+              <td>${list[i + half] ? i + 1 + half : ''}</td>
+              <td class="mono">${esc(list[i + half] || '')}</td><td></td></tr>`).join('')}
         </tbody></table>
 
       <div class="sign">Supplier acknowledgement</div>`;
@@ -637,8 +699,11 @@
     if (!r) return;
     if (r.status === 'PENDING') return UI.toast('The supervisor has to approve the bay first', 'warn');
     const s = Store.settings();
-    const bayBags = Store.where('bags', (b) => b.bayId === r.bayId && b.status === 'STORED');
-    const take = Math.min(r.bags, bayBags.length);
+    // The bags leave the bay's count whether or not they carry serials;
+    // numbered bags in the bay (oldest first) are marked used as well.
+    const take = Math.min(r.bags, VH.bagsInBay(r.bayId));
+    const bayBags = Store.where('bags', (b) => b.bayId === r.bayId && b.status === 'STORED')
+      .sort((a, b) => String(a.deliveredAt || '').localeCompare(String(b.deliveredAt || '')));
 
     UI.modal({
       title: `Weigh and consume ${r.requestNo}`,
@@ -671,6 +736,7 @@
         el.querySelector('[data-act=ok]').addEventListener('click', () => {
           const ws = ['w1', 'w2', 'w3'].map((n) => Number(el.querySelector(`[name=${n}]`).value)).filter((n) => n > 0);
           if (!ws.length) return UI.toast('Enter at least one bag weight', 'warn');
+          if (take < 1) return UI.toast(`${r.bayCode} is empty: there is nothing to issue`, 'danger');
           const avg = D.round2(ws.reduce((a, b) => a + b, 0) / ws.length);
           const moisture = D.moistureFromWeight(avg, s);
           const now = new Date().toISOString();
@@ -684,7 +750,7 @@
           // under Bag returns to be checked and re-issued (req 14).
 
           Store.update('usageRequests', r.id, {
-            status: 'CONSUMED', sampleBags: ws, avgBagKg: avg, moisturePct: moisture,
+            status: 'CONSUMED', bags: take, requestedBags: r.bags, sampleBags: ws, avgBagKg: avg, moisturePct: moisture,
             totalKg: D.round2(avg * take), consumedAt: now, consumedBy: Auth.current().email,
             bagSerials: consumed.map((b) => b.serial),
           }, 'usage-consume');

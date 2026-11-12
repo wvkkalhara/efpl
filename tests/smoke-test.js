@@ -32,7 +32,7 @@ vc.on('error', (...a) => console.error('page error:', ...a));
 const SCRIPTS = [
   'js/config.js', 'js/store.js', 'js/domain.js', 'js/firebase.js', 'js/auth.js',
   'js/sync.js', 'js/ui.js', 'js/seed.js', 'js/app.js',
-  'js/views-core.js', 'js/views-stock.js', 'js/views-money.js',
+  'js/views-core.js', 'js/views-stock.js', 'js/views-money.js', 'js/tutorial.js',
 ];
 
 const pageHtml = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8')
@@ -50,6 +50,8 @@ const { window } = dom;
 for (const src of SCRIPTS) {
   window.eval(fs.readFileSync(path.join(ROOT, src), 'utf8'));
 }
+// the first-time training invitation is tested on its own, below
+window.EFPL_CONFIG.tutorialAutoStart = false;
 
 setTimeout(run, 30);
 
@@ -563,12 +565,12 @@ function run() {
     window.dispatchEvent(new window.Event('afterprint'));
     return ok && !window.document.getElementById('print-root');
   });
-  check('bag labels print with a barcode each', () => {
+  check('bag labels print with a barcode each, one per bag', () => {
     const d = Store.all('deliveries').find((x) => x.receiptNo === 'RC-2026-0005');
     App.printLabels(d.id);
     const n = window.document.querySelectorAll('#print-root .sticker svg.barcode').length;
     window.dispatchEvent(new window.Event('afterprint'));
-    return n > 0 && n <= 96;
+    return n === d.serials.length;
   });
 
   results.push('\nOWNER\'S LIST OF 12 NOVEMBER');
@@ -650,7 +652,8 @@ function run() {
   });
   check('a blank fill-check sheet prints one box per sample bag (5% of 120 = 6)', () => {
     const html = printed(() => App.printFillSheet({ bagCount: 120 }));
-    return /Fill check sheet/.test(html) && /Bag 6/.test(html) && !/Bag 7/.test(html);
+    return /Fill check sheet/.test(html) && /Bag 6/.test(html) && !/Bag 7/.test(html)
+      && !/Total of all readings|Average \(total|Remarks/.test(html);
   });
   check('every print carries the logo', () => {
     const pay = Store.all('payments')[0];
@@ -663,6 +666,39 @@ function run() {
     ];
     const labels = printed(() => App.printLabels(accepted.id));
     return docs.every((h) => h.includes('print-logo')) && labels.includes('sticker-logo');
+  });
+  check('the allocation slip lists every bag issued (a 300-bag round shows 300)', () => {
+    const issue = Store.all('bagIssues').find((i) => (i.serials || []).length > 240) || Store.all('bagIssues')[0];
+    const html = printed(() => App.printAllocationSlip(issue.id));
+    const shown = new Set(html.match(/EFPL-BG-\d{6}/g) || []);
+    return shown.size === issue.serials.length;
+  });
+  check('bag labels carry only the serial, barcode and the supplier write-in box', () => {
+    const d = Store.all('deliveries').find((x) => (x.serials || []).length > 100);
+    const html = printed(() => App.printLabels(d.id));
+    const count = (html.match(/class="sticker"/g) || []).length;
+    return count === d.serials.length && !/Supplier: <b>|Receipt: <b>/.test(html) && /Supplier no/.test(html);
+  });
+  check('a load without serials prints no made-up labels', () => {
+    const d = Store.all('deliveries').find((x) => !(x.serials || []).length);
+    closeModals();
+    App.printLabels(d.id);
+    const none = !window.document.getElementById('print-root');
+    window.dispatchEvent(new window.Event('afterprint'));
+    return none;
+  });
+  check('labels can be printed for a range of numbered bags', () => {
+    closeModals();
+    App.printBagLabels('EFPL-BG-000001', 'EFPL-BG-000010');
+    const m = [...window.document.querySelectorAll('.modal')].pop();
+    const n = m.querySelector('#lbl-count').textContent.replace(/\D/g, '');
+    closeModals();
+    return n === '10';
+  });
+  check('the payment history is in plain words, not codes', () => {
+    const p = Store.all('payments').find((x) => (x.history || []).some((h) => h.action === 'SENT_TO_HEAD_OFFICE'));
+    const html = printed(() => App.printPaymentSlip(p.id));
+    return /Released to Head Office/.test(html) && !/SENT_TO_HEAD_OFFICE|>CREATED<|>APPROVED</.test(html);
   });
   check('the invoice and the receipt carry the supplier\'s bank details', () => {
     const inv = printed(() => App.printInvoice(accepted.id));
@@ -677,6 +713,45 @@ function run() {
     find.dispatchEvent(new window.Event('input', { bubbles: true }));
     const opts = [...f.querySelectorAll('[name=supplierId] option')].filter((o) => o.value);
     return opts.length === 1 && f.querySelector('[name=supplierId]').value === acceptedSup.id && !!f.querySelector('#sup-new');
+  });
+  check('a truck accepted WITHOUT bag serials still fills its bay', () => {
+    const bay = Store.all('bays').find((b) => b.code === 'BAY-20');
+    const before = window.VH.bagsInBay(bay.id);
+    const d = Store.add('deliveries', {
+      receiptNo: 'RC-2026-0900', supplierId: acceptedSup.id, biomassType: 'GLIRICIDIA', vehicleNo: 'NO-SERIALS', driverName: 'T',
+      grossKg: 3000, tareKg: 1800, netKg: 1200, bagCount: 60, avgBagKg: 20, serials: [], allocations: [],
+      fillCheck: { unitPrice: 300, decision: 'PASS' }, status: 'AWAITING_ACCEPTANCE', deliveredAt: new Date().toISOString(),
+    }, 'test');
+    closeModals();
+    App.acceptFlow(d.id);
+    const inputs = window.document.querySelectorAll('[data-bay]');
+    inputs.forEach((i) => { i.value = i.dataset.bay === bay.id ? '60' : '0'; });
+    window.document.querySelector('[name=serials]').value = '';
+    window.document.querySelector('[name=deductionPct]').value = '0';
+    window.document.querySelector('[data-act=accept]').click();
+    const toastText = [...window.document.querySelectorAll('.toast')].map((t) => t.textContent).join(' | ');
+    closeModals();
+    return Store.byId('deliveries', d.id).status === 'ACCEPTED' && window.VH.bagsInBay(bay.id) === before + 60
+      && window.VH.bayNow(bay.id).count === before + 60 && /60 bags stored: BAY-20 60/.test(toastText) && !/0 bag serials/.test(toastText);
+  });
+  check('…and bags without serials can go to the gasifier, leaving the bay', () => {
+    const bay = Store.all('bays').find((b) => b.code === 'BAY-20');
+    const before = window.VH.bagsInBay(bay.id);
+    const r = Store.add('usageRequests', { requestNo: 'USE-0900', bayId: bay.id, bayCode: bay.code, bags: 20, status: 'APPROVED', requestedAt: new Date().toISOString(), approvedAt: new Date().toISOString() }, 'test');
+    closeModals();
+    App.consumeUsage(r.id);
+    ['w1', 'w2', 'w3'].forEach((n) => { window.document.querySelector(`.modal [name=${n}]`).value = '21'; });
+    window.document.querySelector('.modal [data-act=ok]').click();
+    closeModals();
+    const u = Store.byId('usageRequests', r.id);
+    const hist = window.VH.bayHistory(bay.id);
+    return u.status === 'CONSUMED' && u.bags === 20 && u.totalKg === 420 && window.VH.bagsInBay(bay.id) === before - 20
+      && hist.some((h) => h.kind === 'in' && h.bags === 60) && hist.some((h) => h.kind === 'out' && h.bags === 20);
+  });
+  check('the dashboard counts the bags in the bays, serials or not', () => {
+    App.navigate('dashboard');
+    const total = Store.all('bays').reduce((a, b) => a + window.VH.bagsInBay(b.id), 0);
+    return window.document.querySelector('.hero-yard-value').textContent.replace(/\D/g, '') === String(total);
   });
   check('a half-entered load survives printing and a page reload, on the step it was on', () => {
     App.navigate('intake');
@@ -702,6 +777,37 @@ function run() {
     App.mountView();
     return window.document.querySelector('#intake-form [name=vehicleNo]').value === ''
       && !Object.keys(window.localStorage).some((k) => k.startsWith('efpl.intakeDraft'));
+  });
+  check('training: each role gets the missions for its own job', () => {
+    const missionsFor = (role, email) => { session(role, email); App.render(); return window.Training.missions().map((m) => m.id); };
+    const op = missionsFor('operator', 'sunil.ops@efpl.org');
+    const acc = missionsFor('accounts', 'accounts@efpl.org');
+    const sk = missionsFor('storekeeper', 'chaminda.raj@efpl.org');
+    const ad = missionsFor('admin', 'kasun.perera@efpl.org');
+    return op.includes('gasifier') && !op.includes('payments') && !op.includes('receive')
+      && acc.includes('payments') && !acc.includes('receive') && !acc.includes('gasifier')
+      && sk.includes('receive') && sk.includes('bags') && !sk.includes('admin')
+      && ad.length >= 10 && ad.every((id) => id !== 'audit');
+  });
+  check('training is on every role\'s menu and opens the Training screen', () => {
+    session('operator', 'sunil.ops@efpl.org'); App.render();
+    const inMenu = App.visibleScreens().includes('training') && !!window.document.querySelector('[data-menu=training]');
+    App.navigate('training');
+    const ok = /Your missions/.test(window.document.querySelector('#view').textContent) && window.document.querySelectorAll('.train-card').length === window.Training.missions().length;
+    session('admin', 'kasun.perera@efpl.org'); App.render();
+    return inMenu && ok;
+  });
+  check('the first-time invitation appears once, and Later does not bring it back', () => {
+    window.EFPL_CONFIG.tutorialAutoStart = true;
+    window.localStorage.removeItem('efpl.training.v1.kasun.perera@efpl.org');
+    window.Training._invite();
+    const shown = !!window.document.querySelector('.train-invite');
+    window.document.querySelector('.train-invite [data-ti=later]').click();
+    window.document.querySelectorAll('.train-invite').forEach((n) => n.remove());
+    window.Training._invite();
+    const again = !!window.document.querySelector('.train-invite');
+    window.EFPL_CONFIG.tutorialAutoStart = false;
+    return shown && !again;
   });
   check('an administrator can remove a user, and add the same email back later', () => {
     const u = Store.all('users').find((x) => x.role === 'storekeeper' && !x.deleted);

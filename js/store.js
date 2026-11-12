@@ -447,6 +447,32 @@
       return this.data;
     },
 
+    /**
+     * The owner cleared the records everywhere (Administration → Data & sync).
+     * Empty those collections on this device and forget their pending
+     * uploads, so nothing old is sent back up. Anything made on this device
+     * AFTER the clear-out (offline work) is kept. Numbering starts again.
+     */
+    wipeRecords(colls, atISO) {
+      const ms = (s) => (typeof s === 'string' && s ? Date.parse(s) || 0 : 0);   // Date.parse(0) would be the year 2000
+      const at = ms(atISO);
+      const after = (r) => ms(r && r.createdAt) > at;
+      let removed = 0;
+      for (const c of colls) {
+        const before = (this.data[c] || []).length;
+        this.data[c] = (this.data[c] || []).filter(after);
+        removed += before - this.data[c].length;
+      }
+      const keepIds = new Set(colls.flatMap((c) => this.data[c].map((r) => `${c}:${r.id}`)));
+      this.data.outbox = (this.data.outbox || []).filter((o) => !colls.includes(o.coll) || keepIds.has(`${o.coll}:${o.id}`));
+      this.data.counters = {};
+      this.bumpCounters();
+      this.data.meta.wipeSeenAt = atISO;
+      this.flush();
+      this.notify('wipe');
+      return removed;
+    },
+
     resetAll({ keepUsers = true } = {}) {
       const users = keepUsers ? this.data.users : [];
       this.data = blankDoc();

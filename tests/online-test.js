@@ -63,9 +63,11 @@ class FakeEventSource {
 window.EventSource = FakeEventSource;
 
 for (const src of ['js/config.js', 'js/store.js', 'js/domain.js', 'js/firebase.js', 'js/auth.js', 'js/sync.js', 'js/ui.js',
-  'js/seed.js', 'js/app.js', 'js/views-core.js', 'js/views-stock.js', 'js/views-money.js']) {
+  'js/seed.js', 'js/app.js', 'js/views-core.js', 'js/views-stock.js', 'js/views-money.js', 'js/tutorial.js']) {
   window.eval(fs.readFileSync(path.join(ROOT, src), 'utf8'));
 }
+
+window.EFPL_CONFIG.tutorialAutoStart = false;
 
 /* ---- a pretend cloud ---- */
 const net = { up: false, mode: 'ok', calls: 0 };
@@ -200,6 +202,92 @@ async function run() {
     await until(() => Sync.state.phase === 'ok', 3000);
     await sleep(50);
     return toasts() === before;
+  });
+
+  results.push('\nOWNER: DELETE ALL RECORDS EVERYWHERE');
+  const patches = [];
+  FB.patch = async (p, v) => { if (!net.up) throw netError(); patches.push([p, JSON.parse(JSON.stringify(v))]); return {}; };
+  const signInAs = (role, email) => {
+    window.localStorage.setItem('efpl.session.v1', JSON.stringify({
+      uid: `u-${role}`, email, name: role, role, mode: 'online', ownerVerified: role === 'super_admin',
+      idToken: 'tok', tokenExpiresAt: Date.now() + 3600e3, signedInAt: new Date().toISOString(), rememberUntil: new Date(Date.now() + 864e5).toISOString(),
+    }));
+    Auth.restore(); Auth.idToken = async () => 'tok';
+  };
+  const fill = () => {
+    Store.add('suppliers', { code: 'SUP-0001', name: 'Test supplier' });
+    Store.add('deliveries', { receiptNo: 'RC-2026-0001', status: 'ACCEPTED', bagCount: 10, allocations: [] });
+    Store.add('payments', { paymentNo: 'PAY-2026-0001', status: 'APPROVED', netAmount: 3000 });
+  };
+  fill();
+  App.ensureBays();
+  const baysBefore = Store.all('bays').length;
+  const price = Store.settings().unitPrice;
+  await check('an administrator cannot delete everything', async () => {
+    try { await Sync.wipeEverywhere(); return false; } catch (e) { return /owner/i.test(e.message) && Store.all('deliveries').length > 0; }
+  });
+  signInAs('super_admin', 'w.v.k.kalhara@gmail.com');
+  await check('with no connection nothing is deleted, and it says so', async () => {
+    net.up = false;
+    patches.length = 0;
+    try { await Sync.wipeEverywhere(); return false; } catch (e) {
+      net.up = true;
+      return /Nothing was deleted/.test(e.message) && Store.all('deliveries').length > 0 && patches.length === 0;
+    }
+  });
+  let wipeAt = null;
+  await check('the owner deletes in the cloud first, then tells every device', async () => {
+    patches.length = 0;
+    const res = await Sync.wipeEverywhere();
+    wipeAt = res.at;
+    const [first, second] = patches;
+    return first[0] === 'biomass' && first[1].deliveries === null && first[1].payments === null && first[1].suppliers === null && first[1].bags === null
+      && !('bays' in first[1]) && !('settings' in first[1]) && !('users' in first[1])
+      && second[0] === 'appConfig' && second[1].wipe && second[1].wipe.at === res.at && /kalhara/.test(second[1].wipe.by)
+      && patches.some((p) => p[0] === 'biomass' && p[1].pulse);
+  });
+  await check('this device is cleared; staff, settings and the bay list are kept', async () => {
+    return ['deliveries', 'payments', 'suppliers', 'bags'].every((c) => Store.all(c).length === 0)
+      && Store.all('bays').length === baysBefore && Store.settings().unitPrice === price && Store.all('users').length > 0
+      && !(Store.data.outbox || []).some((o) => ['deliveries', 'payments', 'suppliers'].includes(o.coll))
+      && Store.data.meta.wipeSeenAt === wipeAt;
+  });
+  await check('numbering starts again at 0001', async () => Store.nextSeq('receipt', 1) === 1);
+
+  results.push('\nANOTHER DEVICE SEES THE CLEAR-OUT');
+  // pretend to be a second device that still has the old records, plus one load typed offline afterwards
+  Store.data.meta.wipeSeenAt = undefined;
+  const old = new Date(Date.parse(wipeAt) - 3600e3).toISOString();
+  const later = new Date(Date.parse(wipeAt) + 60e3).toISOString();
+  Store.data.deliveries.push({ id: 'del_old', receiptNo: 'RC-2026-0007', status: 'ACCEPTED', createdAt: old, updatedAt: old, allocations: [] });
+  Store.data.deliveries.push({ id: 'del_new', receiptNo: 'RC-2026-0001', status: 'AWAITING_ACCEPTANCE', createdAt: later, updatedAt: later, allocations: [] });
+  Store.data.outbox.push({ id: 'ob1', coll: 'deliveries', id2: 'x', at: old }, { id: 'ob2', coll: 'deliveries', at: later });
+  Store.data.outbox[Store.data.outbox.length - 2].id = 'del_old';
+  Store.data.outbox[Store.data.outbox.length - 1].id = 'del_new';
+  let told = null;
+  window.addEventListener('efpl:wiped', (e) => { told = e.detail; }, { once: true });
+  FB.get = async (p) => { if (!net.up) throw netError(); return p === 'appConfig' ? { wipe: { at: wipeAt, by: 'w.v.k.kalhara@gmail.com' } } : null; };
+  await check('it clears its old records by itself and says who did it', async () => {
+    await Sync.now('stream');
+    return !Store.byId('deliveries', 'del_old') && !!told && /kalhara/.test(told.by)
+      && !(Store.data.outbox || []).some((o) => o.id === 'del_old');
+  });
+  await check('work typed offline after the clear-out is kept and still uploads', async () => {
+    const sent = patches.some((p) => /deliveries$/.test(p[0]) && p[1] && p[1].del_new);
+    const sentOld = patches.some((p) => /deliveries$/.test(p[0]) && p[1] && p[1].del_old);
+    return !!Store.byId('deliveries', 'del_new') && sent && !sentOld;
+  });
+  await check('an old record uploaded by a stale device never comes back', async () => {
+    Sync._mergeCollection('deliveries', {
+      del_zombie: { id: 'del_zombie', receiptNo: 'RC-2026-0003', createdAt: old, updatedAt: later },
+      del_fresh: { id: 'del_fresh', receiptNo: 'RC-2026-0004', createdAt: later, updatedAt: later },
+    });
+    return !Store.byId('deliveries', 'del_zombie') && !!Store.byId('deliveries', 'del_fresh');
+  });
+  await check('it happens once: the same mark does not clear new work again', async () => {
+    const n = Store.all('deliveries').length;
+    await Sync.now('stream');
+    return Store.all('deliveries').length === n;
   });
 
   Sync.stop();

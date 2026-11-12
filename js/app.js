@@ -38,6 +38,10 @@
       { id: 'reports', label: 'Reports', short: 'Reports', icon: 'chart', see: ['report.read', 'audit.read'] },
       { id: 'admin', label: 'Administration', short: 'Admin', icon: 'settings', see: ['user.manage', 'settings.write', 'audit.read'] },
     ] },
+    { group: 'Help', items: [
+      // everyone, whatever their role (see js/tutorial.js)
+      { id: 'training', label: 'Training', short: 'Training', icon: 'cap' },
+    ] },
   ];
   const NAV_ITEMS = NAV.flatMap((g) => g.items);
   const ico = UI.icon;
@@ -90,6 +94,13 @@
         const y = window.scrollY;
         this.mountView();
         window.scrollTo(0, y);
+      });
+      // The owner deleted all records everywhere: redraw and say so.
+      window.addEventListener('efpl:wiped', (e) => {
+        if (!document.querySelector('.app-shell')) return;
+        const by = (e.detail && e.detail.by) || 'The owner';
+        UI.toast(`${by} cleared all records. This device has been cleared too.`, 'warn', 8000);
+        this.render();
       });
       // Live screens (activity log, staff list) refresh themselves on every sync round.
       window.addEventListener('efpl:live', () => {
@@ -282,6 +293,7 @@
                 <div class="dropdown" id="user-dropdown" role="menu" hidden>
                   <div class="dropdown-head">${esc(user.email)}</div>
                   <button data-menu="account">${ico('key')} My account and password</button>
+                  <button data-menu="training">${ico('cap')} Training</button>
                   ${this.canSee('admin') ? `<button data-menu="settings">${ico('settings')} Administration</button>` : ''}
                   <button data-menu="backup">${ico('download')} Backup data</button>
                   <button data-menu="logout" class="danger-text">${ico('logout')} Sign out</button>
@@ -712,6 +724,11 @@
             <span class="avatar lg">${esc((user.name || user.email).slice(0, 1).toUpperCase())}</span>
             <div><strong>${esc(user.name || user.email)}</strong><small>${esc(D.ROLE_LABEL[Auth.role()] || Auth.role())} · ${esc(user.email)}</small></div>
           </div>
+          <div class="acc-training">
+            <span class="acc-training-ico">${ico('cap')}</span>
+            <div><b>Training</b><small>Missions for your job, any time, as often as you like.</small></div>
+            <button type="button" class="nm-btn" data-act="training">Open</button>
+          </div>
           <h4>${has ? 'Change your password' : 'Create a password'}</h4>
           ${demo ? '<p class="muted">Passwords cannot be set in the demo.</p>' : `
             <p class="muted small">${has
@@ -723,6 +740,7 @@
             ${UI.field('Type it again', UI.input('newPassword2', { type: 'password', autocomplete: 'new-password' }))}`}`,
         footer: `<button class="nm-btn" data-close>Close</button>${demo ? '' : `<button class="nm-btn primary" data-act="save-pw">${has ? 'Change password' : 'Create password'}</button>`}`,
         onMount: (el, close) => {
+          el.querySelector('[data-act=training]').addEventListener('click', () => { close(); this.navigate('training'); });
           const toggle = el.querySelector('#acc-pw-toggle');
           if (toggle) toggle.addEventListener('click', () => {
             UI.$$('[name=newPassword], [name=newPassword2]', el).forEach((i) => { i.type = i.type === 'password' ? 'text' : 'password'; });
@@ -762,6 +780,7 @@
       }
       if (what === 'settings') { this.navigate('admin'); return; }
       if (what === 'account') { UI.whenSettled(() => this.accountDialog()); return; }
+      if (what === 'training') { this.navigate('training'); return; }
       if (what === 'backup') {
         UI.download(`enerfab-biomass-backup-${D.todayISO()}.json`, JSON.stringify(this.exportData(), null, 2));
         UI.toast('Backup downloaded', 'ok');
@@ -792,6 +811,7 @@
           ${groups}
           <div class="more-actions">
             <button class="nm-btn block" data-act="account">${ico('key')} My account and password</button>
+            <button class="nm-btn block" data-act="training">${ico('cap')} Training</button>
             <button class="nm-btn block" data-act="backup">${ico('download')} Backup data</button>
             <button class="nm-btn block danger-ghost" data-act="logout">${ico('logout')} Sign out</button>
           </div>`,

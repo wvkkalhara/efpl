@@ -349,6 +349,12 @@
     PAID: 'Paid',
   };
   const paymentCanGo = (from, to) => (PAYMENT_FLOW[from] || []).includes(to);
+  /** A step in a payment's history, in plain words. */
+  const PAYMENT_ACTION = {
+    CREATED: 'Created', PENDING_SUPERVISOR: 'Sent for authorisation', APPROVED: 'Authorised',
+    SENT_TO_HEAD_OFFICE: 'Released to Head Office', PAID: 'Paid', DEDUCTION_SET: 'Deduction changed', DRAFT: 'Draft',
+  };
+  const paymentActionLabel = (a) => PAYMENT_ACTION[a] || String(a || '').replace(/_/g, ' ').toLowerCase().replace(/^./, (c) => c.toUpperCase());
 
   /* ------------------------------ serials ---------------------------- */
   function bagSerial(prefix, n, width = 6) {
@@ -456,7 +462,7 @@
     round2, sampleSizeFor, evaluateFillCheck, moistureFromWeight, moistureBand,
     moistureCalibration, weightForMoisture, moistureHighPct, MOISTURE_LABEL, moistureTone, applyDeduction, suggestedDeduction,
     driedBagKg, daysSince, moistureReadyPct,
-    weighTruck, avgBagWeight, PAYMENT_FLOW, PAYMENT_LABEL, paymentCanGo,
+    weighTruck, avgBagWeight, PAYMENT_FLOW, PAYMENT_LABEL, paymentCanGo, paymentActionLabel,
     bagSerial, serialRange, parseSerialNumber, traceBag, code39SVG,
     money, kg, pct, dt, dOnly, todayISO,
   };
