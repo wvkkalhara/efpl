@@ -371,11 +371,40 @@
       if (sub.status === 'SUSPENDED' && !Auth.isSuper(Auth.current())) { this.render(); return; }
       if (!chip) return;
       const s = Sync.state;
-      chip.dataset.phase = s.phase;
-      const pending = (Store.data.outbox || []).length;
       const isDemo = (Auth.current() || {}).mode === 'preview';
-      chip.querySelector('.sync-text').textContent = isDemo ? 'Demo data' : (pending ? `${pending} pending` : Sync.label());
-      chip.title = isDemo ? 'Demo session — sample records are not sent to the live database' : [Sync.label(), s.lastSyncAt ? `Last sync ${D.dt(s.lastSyncAt)}` : 'Not synced yet', s.lastError || ''].filter(Boolean).join(' · ');
+      const v = isDemo ? { tone: 'ok', text: 'Demo data', detail: 'Demo session — sample records are not sent to the live database' } : Sync.view();
+      chip.dataset.phase = s.phase;
+      if (chip.dataset.tone !== v.tone) chip.dataset.tone = v.tone;
+      const text = chip.querySelector('.sync-text');
+      if (text.textContent !== v.text) text.textContent = v.text;
+      const title = isDemo ? v.detail : [v.detail, s.lastSyncAt ? `Last saved to cloud ${D.dt(s.lastSyncAt)}` : 'Not synced yet'].filter(Boolean).join(' · ');
+      chip.title = title;
+      chip.setAttribute('aria-label', `${v.text}. ${title}`);
+      if (!isDemo) this.noticeConnection(v.tone);
+    },
+
+    /**
+     * One quiet note when the connection really changes: after a stretch
+     * offline ("Back online") or when it goes ("Offline, saved here").
+     * Never on start-up, never for a blip of a few seconds.
+     */
+    noticeConnection(tone) {
+      const online = tone === 'live' || tone === 'ok';
+      const st = this._conn || (this._conn = { online: null, since: Date.now(), timer: null });
+      if (tone === 'connecting' || tone === 'problem') return;           // not settled either way yet
+      if (st.online === null) { st.online = online; st.since = Date.now(); return; }
+      if (online === st.online) return;
+      st.online = online;
+      clearTimeout(st.timer);
+      if (!online) {
+        st.since = Date.now();
+        // wait a little: a dropped signal that comes straight back is not news
+        st.timer = setTimeout(() => {
+          if (!st.online) UI.toast('Offline. Everything is saved on this device and uploads by itself.', 'warn', 5000);
+        }, 8000);
+      } else if (Date.now() - st.since > 8000) {
+        UI.toast('Back online. Everything is up to date.', 'ok');
+      }
     },
 
     /* ---------------------------- sign in ---------------------------- */
@@ -646,12 +675,12 @@
       const chip = document.getElementById('sync-chip');
       if (chip) chip.addEventListener('click', async () => {
         if ((Auth.current() || {}).mode === 'preview') { UI.toast('Demo session — sample records are not sent anywhere'); return; }
-        UI.toast('Syncing…');
         await Sync.now('manual');
         const s = Sync.state;
         if (s.phase === 'blocked') UI.toast(s.lastError || 'Cloud access blocked', 'danger', 7000);
-        else if (s.phase === 'offline') UI.toast('Still offline — everything is saved on this device', 'warn');
-        else UI.toast('Sync complete', 'ok');
+        else if (s.phase === 'offline') UI.toast('Still offline. Everything is saved on this device and uploads by itself.', 'warn');
+        else if (s.phase === 'error') UI.toast(Sync.view().detail || 'Could not reach the cloud. Trying again by itself.', s.fatal ? 'danger' : 'warn', 6000);
+        else UI.toast(s.live ? 'Live and up to date' : 'Up to date', 'ok');
         this.refresh();
       });
     },

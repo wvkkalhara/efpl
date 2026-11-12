@@ -127,7 +127,9 @@ with a syntax check of every source file, JSON validation and a build.
 
 The suite boots `index.html` in jsdom, seeds the demo history, signs in, walks all 14 routes, then drives real flows: it accepts a waiting truck with a 5 % deduction (allocation, serial capture, auto payment, audit entry), approves and consumes a gasifier issue, verifies the Rs 300 / Rs 270 rule and the moisture formula, checks that a serial traces to supplier + farmer + receipt, and confirms the subscription gate hides the app from staff but not from the owner.
 
-Run it after every change. (The v1.3.0 changes were verified by driving the same flows in a browser; run `npm test` once on a machine with Node.js to confirm the suite itself.)
+`tests/online-test.js` (also run by `npm test`) checks that the app keeps itself online: with a pretend cloud and live link it takes the network away and gives it back, drops the link and lets it go silent, and confirms the app reconnects by itself while the status chip stays calm.
+
+Run it after every change.
 
 ---
 

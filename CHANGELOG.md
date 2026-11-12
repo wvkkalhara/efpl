@@ -3,6 +3,45 @@
 All notable changes to the EnerFab Biomass Storage system.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.5.2] — 2026-11-13
+
+### Fixed
+
+* **A half-entered truck was lost after printing the blank fill sheet.** On
+  a phone or tablet, printing sends the browser to the background and the
+  phone often reloads the page on the way back, which wiped everything typed
+  on Receive biomass. The form now keeps a draft on the device as you type
+  (fill readings and the step included), saves it the moment Print is
+  pressed, and brings it back after a reload, with a short notice. The draft
+  is removed when the load is registered or cleared, so it can never come
+  back as a second delivery.
+
+### Changed
+
+* **The app keeps itself online.** Nobody has to press anything:
+  - a failed sync is tried again after 3, 6, 12, 20 and then every 30 seconds;
+  - the real-time link is re-opened by itself when it drops, including when
+    the sign-in ticket could not be fetched yet (before, it waited for the
+    tab to be switched or the network to change);
+  - a link that goes silent (phone networks can drop it without saying so)
+    is noticed within about a minute and a half and replaced;
+  - coming back to the app, the window, or the network checks at once.
+* **A calmer status chip.** Short words: Live, Saved to cloud, Reconnecting…,
+  Offline. Live has a slow, soft ring; reconnecting is a gentle green pulse.
+  Background checks no longer flash "Syncing…" every 30 seconds, and a passing
+  network blip is never shown in red. Red is kept for the one thing a person
+  must fix (sign in again, or the cloud refusing access). A single quiet note
+  appears if the device stays offline, and "Back online" when it returns;
+  a blip of a few seconds shows nothing. Animations respect the phone's
+  reduced-motion setting.
+
+### Tests
+
+* New `tests/online-test.js` (part of `npm test`): a pretend cloud and live
+  link are taken away and given back, dropped, and left silent; 15 checks that
+  the app reconnects by itself and the chip stays calm. The smoke test gains
+  two checks for the Receive-form draft (146 checks).
+
 ## [1.5.1] — 2026-11-13
 
 From the owner's WhatsApp list of 12 November.

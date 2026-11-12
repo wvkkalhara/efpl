@@ -46,11 +46,19 @@
     pulled: 0,
     refused: [],          // collections the database rules would not accept
     live: false,          // true while the real-time link to the cloud is open
+    quiet: false,         // a background round is running: the status chip does not flicker for it
+    settled: 'idle',      // the last phase that was not "syncing" (what a quiet round keeps showing)
+    fatal: false,         // a problem that retrying will not fix (sign-in expired)
+    retryAt: 0,           // when the next automatic attempt to get back online is due
     listeners: new Set(),
   };
 
   const emit = () => { for (const fn of state.listeners) { try { fn(state); } catch (e) { console.error(e); } } };
-  const set = (patch) => { Object.assign(state, patch); emit(); };
+  const set = (patch) => {
+    Object.assign(state, patch);
+    if (state.phase !== 'syncing') state.settled = state.phase;
+    emit();
+  };
 
   let timer = null;
   let running = false;
@@ -416,14 +424,19 @@
   }
 
   async function syncNow(reason) {
-    if (running) return;
+    if (running) { if (reason === 'manual') again = true; return; }
     const me = Auth().current();
     if (!me) { set({ phase: 'signed-out' }); return; }
     if (me.mode === 'preview' || Store.space === 'demo') return;   // the demo never syncs
-    if (navigator.onLine === false) { set({ phase: 'offline' }); return; }
+    if (navigator.onLine === false) { set({ phase: 'offline' }); scheduleRetry(); return; }
 
     running = true;
-    set({ phase: 'syncing' });
+    clearTimeout(retryTimer); retryTimer = null; state.retryAt = 0;
+    // Only a sync someone asked for (or the first one) shows "Syncing…".
+    // Background rounds run every few seconds; the chip keeps showing the
+    // settled state instead of flickering.
+    state.quiet = reason !== 'manual' && reason !== 'start';
+    set({ phase: 'syncing', fatal: false });
     try {
       try {
         await round(reason);
@@ -437,9 +450,14 @@
       else if (state.phase !== 'offline' && state.phase !== 'blocked') set({ lastSyncAt: new Date().toISOString() });
     } catch (err) {
       const expired = isExpiredToken(err);
-      set({ phase: 'error', lastError: expired ? 'Your sign-in has expired. Sign out and sign in again to resume syncing.' : (err && err.message) || 'Sync failed' });
+      set({ phase: 'error', fatal: expired, lastError: expired ? 'Your sign-in has expired. Sign out and sign in again to resume syncing.' : (err && err.message) || 'Sync failed' });
     } finally {
       running = false;
+      state.quiet = false;
+      // Stay online by ourselves: a failed round is tried again soon, a good
+      // one re-opens any live link that has dropped.
+      if (state.phase === 'ok' || state.phase === 'idle') { retryStep = 0; ensureLinks(); }
+      else if (state.phase === 'offline' || (state.phase === 'error' && !state.fatal)) scheduleRetry();
       emit();
       // Screens that show live figures (reports, activity log, staff list) redraw on this.
       window.dispatchEvent(new CustomEvent('efpl:live', { detail: { reason } }));
@@ -458,15 +476,85 @@
      rules not yet published) nothing breaks: the regular checks carry on. */
   let stream = null;
   let streamRenew = null;
+  let streamOpening = false;
+  let streamBeat = 0;        // last time anything (data or keep-alive) arrived on the link
+  let streamFails = 0;
   let pullSoon = null;
   let pushSoon = null;
   let again = false;
 
+  /* ---------------------------- staying online -----------------------
+     The app keeps trying to be online by itself, without anyone pressing
+     anything: a failed sync is retried after 3, 6, 12, 20 and then every
+     30 seconds; a dropped live link is re-opened the same way; a link that
+     has gone silent (a phone network can drop it without saying so) is
+     replaced; and coming back to the app, the tab or the network checks
+     at once. Nothing here ever shows an error for a passing network blip. */
+  const BACKOFF = [3000, 6000, 12000, 20000, 30000];
+  const backoff = (n) => BACKOFF[Math.min(n, BACKOFF.length - 1)];
+  let STALE_LINK_MS = 100000;     // Firebase sends a keep-alive about every 30 s
+  let retryTimer = null;
+  let retryStep = 0;
+
+  const mayGoOnline = () => {
+    const me = Auth().current();
+    return !!me && me.mode !== 'preview' && Store.space !== 'demo';
+  };
+
+  function scheduleRetry() {
+    if (retryTimer || !mayGoOnline()) return;
+    const wait = backoff(retryStep++);
+    state.retryAt = Date.now() + wait;
+    retryTimer = setTimeout(() => { retryTimer = null; state.retryAt = 0; syncNow('retry'); }, wait);
+  }
+
+  /** Open whichever live link is missing (cheap to call often). */
+  function ensureLinks() {
+    if (!mayGoOnline() || navigator.onLine === false) return;
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+    if (!stream && !streamOpening && !streamRenewPending()) openStream();
+    if (!userStream && !userStreamOpening && !userStreamRenewPending()) openUserStream();
+  }
+  const streamRenewPending = () => !!streamRenew && !stream;
+  const userStreamRenewPending = () => !!userStreamRenew && !userStream;
+
+  /** Watchdog: replace a link that has gone quiet for too long. */
+  function checkLinks() {
+    if (stream && streamBeat && Date.now() - streamBeat > STALE_LINK_MS) openStream();
+    if (userStream && userStreamBeat && Date.now() - userStreamBeat > STALE_LINK_MS) openUserStream();
+    ensureLinks();
+  }
+
+  /** Coming back to the app, the tab or the network: check straight away. */
+  function wake(reason) {
+    if (!mayGoOnline()) return;
+    if (navigator.onLine === false) { set({ phase: 'offline' }); return; }
+    // skip any waiting: this is the moment the network is most likely back
+    retryStep = 0;
+    if (!stream) { clearTimeout(streamRenew); streamRenew = null; streamFails = 0; }
+    if (!userStream) { clearTimeout(userStreamRenew); userStreamRenew = null; userStreamFails = 0; }
+    syncNow(reason);
+    checkLinks();
+  }
+
+  function setLive(on) {
+    if (state.live === on) return;
+    state.live = on;
+    emit();
+  }
+
   function closeStream() {
     clearTimeout(streamRenew);
+    streamRenew = null;
     if (stream) { try { stream.close(); } catch { /* already closed */ } }
     stream = null;
-    state.live = false;
+    setLive(false);
+  }
+
+  /** Try the link again later, waiting longer each time it fails. */
+  function reopenStreamLater(ms) {
+    clearTimeout(streamRenew);
+    streamRenew = setTimeout(() => { streamRenew = null; openStream(); }, ms !== undefined ? ms : backoff(streamFails++));
   }
 
   async function openStream() {
@@ -474,17 +562,24 @@
     const me = Auth().current();
     if (typeof window.EventSource !== 'function' || !me || me.mode === 'preview' || Store.space === 'demo' || Auth().isPending()) return;
     if (navigator.onLine === false) return;
+    streamOpening = true;
     let token;
-    try { token = await Auth().idToken(); } catch { return; }
-    if (!token) return;
+    try { token = await Auth().idToken(); } catch { token = null; }
+    streamOpening = false;
+    if (!token) { reopenStreamLater(); return; }              // no signal for the sign-in ticket yet
+    if (stream) return;                                         // another call got there first
     let es;
-    try { es = new window.EventSource(FB.url(`${CFG.syncPath}/pulse`, token)); } catch { return; }
+    try { es = new window.EventSource(FB.url(`${CFG.syncPath}/pulse`, token)); } catch { reopenStreamLater(); return; }
     stream = es;
+    streamBeat = Date.now();
     let first = true;
+    const beat = () => { if (stream === es) streamBeat = Date.now(); };
     const onPulse = (e) => {
       if (stream !== es) return;
-      state.live = true;
-      if (first) { first = false; emit(); return; }           // the value as it was when we connected
+      beat();
+      streamFails = 0;
+      setLive(true);
+      if (first) { first = false; return; }                     // the value as it was when we connected
       let by = null;
       try { const d = JSON.parse(e.data); by = d && d.data && d.data.by; } catch { /* ignore */ }
       if (by && by === Store.data.meta.deviceId) return;     // our own upload
@@ -493,15 +588,18 @@
     };
     es.addEventListener('put', onPulse);
     es.addEventListener('patch', onPulse);
-    es.addEventListener('cancel', () => { if (stream === es) closeStream(); });          // not allowed to watch
+    es.addEventListener('keep-alive', beat);
+    es.onopen = beat;
+    // not allowed to watch (rules not published yet, or no role): look again in a few minutes
+    es.addEventListener('cancel', () => { if (stream === es) { closeStream(); reopenStreamLater(5 * 60 * 1000); } });
     es.addEventListener('auth_revoked', () => { if (stream === es) openStream(); });     // sign-in ticket ran out
     es.onerror = () => {
       if (stream !== es) return;
-      state.live = false;
-      if (es.readyState === 2) { closeStream(); streamRenew = setTimeout(openStream, 60000); }   // gave up: try again in a minute
+      setLive(false);                                           // the browser reconnects by itself (readyState 0)…
+      if (es.readyState === 2) { closeStream(); reopenStreamLater(); }   // …unless it gave up: then we do
     };
     // the ticket in the address lasts an hour — reconnect with a fresh one before that
-    streamRenew = setTimeout(openStream, 50 * 60 * 1000);
+    streamRenew = setTimeout(() => { streamRenew = null; openStream(); }, 50 * 60 * 1000);
   }
 
   /* The staff list has its own live link, because the people it matters most
@@ -513,12 +611,21 @@
          (or their account being switched off) arrives immediately. */
   let userStream = null;
   let userStreamRenew = null;
+  let userStreamOpening = false;
+  let userStreamBeat = 0;
+  let userStreamFails = 0;
   let usersSoon = null;
 
   function closeUserStream() {
     clearTimeout(userStreamRenew);
+    userStreamRenew = null;
     if (userStream) { try { userStream.close(); } catch { /* already closed */ } }
     userStream = null;
+  }
+
+  function reopenUserStreamLater(ms) {
+    clearTimeout(userStreamRenew);
+    userStreamRenew = setTimeout(() => { userStreamRenew = null; openUserStream(); }, ms !== undefined ? ms : backoff(userStreamFails++));
   }
 
   async function openUserStream() {
@@ -528,28 +635,37 @@
     if (navigator.onLine === false) return;
     const all = Auth().isSuper(me) || Auth().can('user.manage');
     if (!all && !me.uid) return;
+    userStreamOpening = true;
     let token;
-    try { token = await Auth().idToken(); } catch { return; }
-    if (!token) return;
+    try { token = await Auth().idToken(); } catch { token = null; }
+    userStreamOpening = false;
+    if (!token) { reopenUserStreamLater(); return; }
+    if (userStream) return;
     let es;
-    try { es = new window.EventSource(FB.url(all ? 'users' : `users/${me.uid}`, token)); } catch { return; }
+    try { es = new window.EventSource(FB.url(all ? 'users' : `users/${me.uid}`, token)); } catch { reopenUserStreamLater(); return; }
     userStream = es;
+    userStreamBeat = Date.now();
     let first = true;
+    const beat = () => { if (userStream === es) userStreamBeat = Date.now(); };
     const onChange = () => {
       if (userStream !== es) return;
+      beat();
+      userStreamFails = 0;
       if (first) { first = false; return; }                   // the list as it was when we connected
       clearTimeout(usersSoon);
       usersSoon = setTimeout(() => { if (running) again = true; else syncNow('stream'); }, 400);
     };
     es.addEventListener('put', onChange);
     es.addEventListener('patch', onChange);
-    es.addEventListener('cancel', () => { if (userStream === es) closeUserStream(); });
+    es.addEventListener('keep-alive', beat);
+    es.onopen = beat;
+    es.addEventListener('cancel', () => { if (userStream === es) { closeUserStream(); reopenUserStreamLater(5 * 60 * 1000); } });
     es.addEventListener('auth_revoked', () => { if (userStream === es) openUserStream(); });
     es.onerror = () => {
       if (userStream !== es) return;
-      if (es.readyState === 2) { closeUserStream(); userStreamRenew = setTimeout(openUserStream, 60000); }
+      if (es.readyState === 2) { closeUserStream(); reopenUserStreamLater(); }
     };
-    userStreamRenew = setTimeout(openUserStream, 50 * 60 * 1000);
+    userStreamRenew = setTimeout(() => { userStreamRenew = null; openUserStream(); }, 50 * 60 * 1000);
   }
 
   /** A local change was saved: upload it shortly, batching quick edits together. */
@@ -565,27 +681,33 @@
     onChange(fn) { state.listeners.add(fn); return () => state.listeners.delete(fn); },
     start() {
       clearInterval(timer);
-      timer = setInterval(() => { if (document.visibilityState === 'visible') syncNow('interval'); }, CFG.syncIntervalMs || 30000);
+      timer = setInterval(() => {
+        if (document.visibilityState !== 'visible') return;
+        syncNow('interval');
+        checkLinks();
+      }, CFG.syncIntervalMs || 30000);
       if (!started) {
         // attach the window listeners once, however often people sign in and out
         started = true;
-        window.addEventListener('online', () => { syncNow('online'); openStream(); openUserStream(); });
+        window.addEventListener('online', () => wake('online'));
         window.addEventListener('offline', () => { closeStream(); closeUserStream(); set({ phase: 'offline' }); });
-        document.addEventListener('visibilitychange', () => {
-          if (document.visibilityState === 'visible' && navigator.onLine) {
-            syncNow('visible');
-            if (!stream) openStream();
-            if (!userStream) openUserStream();
-          }
-        });
+        document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') wake('visible'); });
+        // a phone bringing the app back from the background, or a click back into the window
+        window.addEventListener('pageshow', (e) => { if (e.persisted) wake('visible'); });
+        window.addEventListener('focus', () => { if (!state.live || state.phase !== 'ok') wake('visible'); });
         Store.onChange(onLocalChange);
         // a new role changes what this person may watch
         window.addEventListener('efpl:role-changed', () => { openStream(); openUserStream(); });
       }
-      if (navigator.onLine) { syncNow('start'); openStream(); openUserStream(); }
-      else set({ phase: 'offline' });
+      retryStep = 0; streamFails = 0; userStreamFails = 0;
+      if (navigator.onLine !== false) { syncNow('start'); openStream(); openUserStream(); }
+      else { set({ phase: 'offline' }); scheduleRetry(); }
     },
-    stop() { clearInterval(timer); clearTimeout(pullSoon); clearTimeout(pushSoon); clearTimeout(usersSoon); closeStream(); closeUserStream(); },
+    stop() {
+      clearInterval(timer); clearTimeout(pullSoon); clearTimeout(pushSoon); clearTimeout(usersSoon);
+      clearTimeout(retryTimer); retryTimer = null; state.retryAt = 0;
+      closeStream(); closeUserStream();
+    },
     now: syncNow,
 
     /**
@@ -644,20 +766,48 @@
       return Store.data.config.subscription;
     },
 
-    label() {
-      switch (state.phase) {
-        case 'syncing': return 'Syncing…';
-        case 'ok': return state.live ? 'Live — saved to cloud' : 'All changes saved to cloud';
-        case 'offline': return 'Offline — saving on this device';
-        case 'blocked': return 'Cloud access blocked';
-        case 'error': return state.refused.length ? 'Some changes not accepted' : 'Sync error — retrying';
-        case 'signed-out': return 'Signed out';
-        default: return 'Ready';
+    /**
+     * What the status chip shows: a calm, short word and a tone.
+     *   live        connected in real time
+     *   ok          saved to the cloud (live link not open, regular checks on)
+     *   connecting  getting (back) online by itself, nothing for anyone to do
+     *   offline     no network: everything is kept on this device
+     *   problem     needs a person (rules, role, sign-in expired)
+     * A background round never changes it, so it does not flicker.
+     */
+    view() {
+      const phase = state.phase === 'syncing' && state.quiet ? state.settled : state.phase;
+      const pending = (Store.data.outbox || []).length;
+      switch (phase) {
+        case 'syncing': return { tone: 'connecting', text: 'Syncing…', detail: 'Bringing this device up to date' };
+        case 'ok':
+          if (pending) return { tone: state.live ? 'live' : 'ok', text: `${pending} to upload`, detail: 'Uploading in a moment' };
+          return state.live
+            ? { tone: 'live', text: 'Live', detail: 'Connected in real time. Changes from other devices appear at once.' }
+            : { tone: 'ok', text: 'Saved to cloud', detail: 'Everything is saved. Connecting the live link…' };
+        case 'offline': return {
+          tone: 'offline', text: pending ? `Offline · ${pending} saved here` : 'Offline',
+          detail: 'No connection. Work is saved on this device and uploads by itself when the signal returns.',
+        };
+        case 'blocked': return { tone: 'problem', text: 'Cloud access blocked', detail: state.lastError || '' };
+        case 'error':
+          if (state.fatal || state.refused.length) return { tone: 'problem', text: state.fatal ? 'Sign in again' : 'Some changes not accepted', detail: state.lastError || '' };
+          return { tone: 'connecting', text: 'Reconnecting…', detail: 'The connection dropped. Trying again by itself.' };
+        case 'signed-out': return { tone: 'offline', text: 'Signed out', detail: '' };
+        default: return { tone: 'connecting', text: 'Connecting…', detail: 'Getting online' };
       }
     },
+    label() { return this.view().text; },
 
     // exposed for the automated tests
     _mergeCollection: mergeCollection, _mergeSettings: mergeSettings, _cloudProfile: cloudProfile,
+    _links: {
+      check: checkLinks,
+      wake,
+      staleAfter(ms) { STALE_LINK_MS = ms; },
+      backoff(steps) { BACKOFF.splice(0, BACKOFF.length, ...steps); },
+      open: () => ({ stream: !!stream, userStream: !!userStream, retrying: !!retryTimer }),
+    },
   };
 
   window.Sync = Sync;

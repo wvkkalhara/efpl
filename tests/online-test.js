@@ -1,0 +1,211 @@
+/* =====================================================================
+   online-test.js — "the app always tries to be online by itself".
+   Boots the real app in jsdom with a pretend cloud and a pretend live
+   link, then pulls the network away and gives it back, drops the link,
+   lets it go silent, and checks that the app reconnects on its own and
+   that the status chip stays calm (no flicker, no red for a blip).
+   Run: node tests/online-test.js   (also part of npm test)
+   ===================================================================== */
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const { JSDOM, VirtualConsole } = require('jsdom');
+
+const ROOT = path.join(__dirname, '..');
+const results = [];
+let pass = 0;
+let fail = 0;
+async function check(name, fn) {
+  try {
+    const r = await fn();
+    if (r === false) throw new Error('returned false');
+    pass++; results.push(`  ✓ ${name}`);
+  } catch (e) {
+    fail++; results.push(`  ✗ ${name}\n      ${e.message}`);
+  }
+}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+/** Wait until fn() is true (or give up after `ms`). */
+async function until(fn, ms = 3000) {
+  const end = Date.now() + ms;
+  while (Date.now() < end) { if (fn()) return true; await sleep(20); }
+  return fn();
+}
+
+const vc = new VirtualConsole();
+vc.on('jsdomError', (e) => { if (!/Not implemented/.test(e.message)) console.error('jsdom:', e.message); });
+
+const pageHtml = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8').replace(/<script[\s\S]*?<\/script>/g, '');
+const dom = new JSDOM(pageHtml, { url: 'http://localhost/index.html', runScripts: 'dangerously', pretendToBeVisual: true, virtualConsole: vc });
+const { window } = dom;
+
+/* ---- a pretend live link (EventSource) ---- */
+const links = [];
+const pulses = () => links.filter((l) => /\/pulse\.json/.test(l.url));
+class FakeEventSource {
+  constructor(url) {
+    this.url = url; this.readyState = 0; this.listeners = {}; this.closed = false;
+    links.push(this);
+    setTimeout(() => this.attempt(), 5);
+  }
+  /** Like a browser: with no network it reports an error and keeps retrying by itself. */
+  attempt() {
+    if (this.closed) return;
+    if (net.up) { this.readyState = 1; if (this.onopen) this.onopen(); this.emit('put', { path: '/', data: { at: 1 } }); return; }
+    this.fail(false);
+    setTimeout(() => this.attempt(), 40);
+  }
+  addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); }
+  emit(type, data) { for (const fn of this.listeners[type] || []) fn({ data: JSON.stringify(data) }); }
+  fail(giveUp) { this.readyState = giveUp ? 2 : 0; if (this.onerror) this.onerror(new window.Event('error')); }
+  close() { this.closed = true; this.readyState = 2; }
+}
+window.EventSource = FakeEventSource;
+
+for (const src of ['js/config.js', 'js/store.js', 'js/domain.js', 'js/firebase.js', 'js/auth.js', 'js/sync.js', 'js/ui.js',
+  'js/seed.js', 'js/app.js', 'js/views-core.js', 'js/views-stock.js', 'js/views-money.js']) {
+  window.eval(fs.readFileSync(path.join(ROOT, src), 'utf8'));
+}
+
+/* ---- a pretend cloud ---- */
+const net = { up: false, mode: 'ok', calls: 0 };
+const { FB } = window;
+const netError = () => new FB.FBError('No connection to Firebase — working offline.', 'NETWORK', 0);
+FB.get = async (p) => {
+  net.calls++;
+  await sleep(2);
+  if (!net.up) throw netError();
+  if (net.mode === 'flaky') throw new Error('Service unavailable (503)');
+  if (net.mode === 'expired') { const e = new FB.FBError('Session expired', 'UNAUTHORIZED', 401); e.detail = 'Auth token is expired'; throw e; }
+  return null;
+};
+FB.patch = async () => { if (!net.up) throw netError(); return {}; };
+FB.put = FB.patch;
+FB.url = (p, token) => `https://example.invalid/${p}.json?auth=${token}`;
+
+setTimeout(run, 30);
+
+async function run() {
+  const { Store, Auth, App, Sync, UI } = window;
+  Sync._links.backoff([60, 120, 200]);     // seconds in real life; milliseconds here
+
+  App.boot();
+  window.localStorage.setItem('efpl.session.v1', JSON.stringify({
+    uid: 'u-admin', email: 'kasun.perera@efpl.org', name: 'Kasun', role: 'admin', mode: 'online',
+    idToken: 'tok', tokenExpiresAt: Date.now() + 3600e3,
+    signedInAt: new Date().toISOString(), rememberUntil: new Date(Date.now() + 864e5).toISOString(),
+  }));
+  Auth.restore();
+  Auth.idToken = async () => 'tok';
+  Auth._tokenRefresh = async () => 'tok';
+  App.render();
+  const chip = () => window.document.getElementById('sync-chip');
+  const chipText = () => chip().querySelector('.sync-text').textContent;
+
+  results.push('\nSTARTING WITH NO NETWORK');
+  Sync.start();
+  await check('with no network the app says Offline, calmly (amber, not red)', async () => {
+    await until(() => Sync.state.phase === 'offline');
+    return Sync.view().tone === 'offline' && chip().dataset.tone === 'offline' && /^Offline/.test(chipText());
+  });
+  await check('it keeps trying by itself', async () => {
+    const before = net.calls;
+    await sleep(500);
+    return net.calls > before && Sync._links.open().retrying;
+  });
+
+  results.push('\nTHE NETWORK COMES BACK (nobody touches anything)');
+  net.up = true;
+  await check('it gets back online by itself, without an "online" event', async () => until(() => Sync.state.phase === 'ok', 3000));
+  await check('the live link opens by itself and the chip says Live', async () => {
+    await until(() => Sync.state.live, 3000);
+    return Sync.state.live && chip().dataset.tone === 'live' && chipText() === 'Live';
+  });
+
+  results.push('\nBACKGROUND ROUNDS DO NOT FLICKER');
+  await check('a background sync keeps showing Live (no "Syncing…")', async () => {
+    const p = Sync.now('interval');
+    const during = chipText();
+    await p;
+    return Sync.state.quiet === false && during === 'Live' && chipText() === 'Live';
+  });
+  await check('pressing the chip does show Syncing…', async () => {
+    const p = Sync.now('manual');
+    const during = chipText();
+    await p;
+    return during === 'Syncing…' && chipText() === 'Live';
+  });
+
+  results.push('\nTHE LIVE LINK DROPS OR GOES SILENT');
+  await check('a link the browser gave up on is opened again by itself', async () => {
+    const old = pulses()[pulses().length - 1];
+    const count = pulses().length;
+    old.fail(true);
+    const reopened = await until(() => pulses().length > count && Sync.state.live, 3000);
+    return reopened && pulses()[pulses().length - 1] !== old;
+  });
+  await check('while the browser is reconnecting the chip does not say Live', async () => {
+    const cur = pulses()[pulses().length - 1];
+    cur.fail(false);                          // readyState 0: the browser retries on its own
+    const notLive = !Sync.state.live && chip().dataset.tone !== 'live';
+    cur.emit('put', { path: '/', data: { at: 2 } });   // …and it is back
+    return notLive && Sync.state.live;
+  });
+  await check('a link that has gone silent is replaced', async () => {
+    const count = links.length;
+    Sync._links.staleAfter(80);
+    await sleep(150);
+    Sync._links.check();
+    Sync._links.staleAfter(100000);
+    return until(() => links.length > count && Sync.state.live, 2000);
+  });
+
+  results.push('\nA PASSING PROBLEM IS NOT AN ERROR');
+  await check('a server hiccup shows "Reconnecting…", not red', async () => {
+    net.mode = 'flaky';
+    await Sync.now('stream');                 // a round that downloads (another device changed something)
+    return Sync.state.phase === 'error' && Sync.view().tone === 'connecting' && Sync.view().text === 'Reconnecting…'
+      && chip().dataset.tone === 'connecting' && Sync._links.open().retrying;
+  });
+  await check('…and it recovers by itself', async () => {
+    net.mode = 'ok';
+    return until(() => Sync.state.phase === 'ok', 3000);
+  });
+  await check('an expired sign-in is the one thing shown in red, and it stops retrying', async () => {
+    net.mode = 'expired';
+    await Sync.now('interval');
+    const ok = Sync.state.fatal && Sync.view().tone === 'problem' && !Sync._links.open().retrying;
+    net.mode = 'ok';
+    return ok;
+  });
+
+  results.push('\nGOING AND COMING BACK');
+  await check('the network going away closes the link and shows Offline', async () => {
+    net.up = false;
+    window.dispatchEvent(new window.Event('offline'));
+    return Sync.state.phase === 'offline' && !Sync.state.live && chip().dataset.tone === 'offline';
+  });
+  await check('coming back to the app checks straight away', async () => {
+    net.up = true;
+    const count = links.length;
+    window.dispatchEvent(new window.Event('online'));
+    return until(() => Sync.state.phase === 'ok' && Sync.state.live && links.length > count, 2000);
+  });
+  await check('a short blip does not pop up "Offline" / "Back online" notices', async () => {
+    const toasts = () => window.document.querySelectorAll('.toast').length;
+    const before = toasts();
+    net.up = false;
+    await Sync.now('interval');
+    net.up = true;
+    await until(() => Sync.state.phase === 'ok', 3000);
+    await sleep(50);
+    return toasts() === before;
+  });
+
+  Sync.stop();
+  console.log('\n================ EnerFab Biomass Storage · staying online ================');
+  console.log(results.join('\n'));
+  console.log(`\n${pass} passed, ${fail} failed\n`);
+  dom.window.close();
+  process.exit(fail ? 1 : 0);
+}

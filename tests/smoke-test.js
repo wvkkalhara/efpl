@@ -678,6 +678,31 @@ function run() {
     const opts = [...f.querySelectorAll('[name=supplierId] option')].filter((o) => o.value);
     return opts.length === 1 && f.querySelector('[name=supplierId]').value === acceptedSup.id && !!f.querySelector('#sup-new');
   });
+  check('a half-entered load survives printing and a page reload, on the step it was on', () => {
+    App.navigate('intake');
+    let f = window.document.querySelector('#intake-form');
+    const put = (n, v) => { const e = f.querySelector(`[name=${n}]`); e.value = v; e.dispatchEvent(new window.Event('input', { bubbles: true })); };
+    put('supplierId', acceptedSup.id); put('vehicleNo', 'SG DR-0001'); put('driverName', 'Draft Driver');
+    f.querySelector('#step-next').click();
+    put('grossKg', '6000'); put('tareKg', '4000'); put('bagCount', '40');
+    f.querySelector('#step-next').click();
+    const cell = f.querySelector('[data-fill]');
+    cell.value = '87'; cell.dispatchEvent(new window.Event('input', { bubbles: true }));
+    printed(() => f.querySelector('#print-fill-sheet').click());   // saves the draft before printing
+    // what a phone does when it comes back from the print screen: reload the page
+    App.mountView();
+    f = window.document.querySelector('#intake-form');
+    const shown = [...f.querySelectorAll(':scope > section')].map((x) => (x.hidden ? 0 : 1)).join('');
+    return f.querySelector('[name=vehicleNo]').value === 'SG DR-0001' && f.querySelector('[name=supplierId]').value === acceptedSup.id
+      && f.querySelector('[name=bagCount]').value === '40' && f.querySelector('[data-fill]').value === '87' && shown === '0010';
+  });
+  check('the draft is forgotten once the load is cleared', () => {
+    const f = window.document.querySelector('#intake-form');
+    f.querySelector('#cancel-intake').click();
+    App.mountView();
+    return window.document.querySelector('#intake-form [name=vehicleNo]').value === ''
+      && !Object.keys(window.localStorage).some((k) => k.startsWith('efpl.intakeDraft'));
+  });
   check('an administrator can remove a user, and add the same email back later', () => {
     const u = Store.all('users').find((x) => x.role === 'storekeeper' && !x.deleted);
     Auth.removeUser(u.id);

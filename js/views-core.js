@@ -562,6 +562,7 @@
       const form = view.querySelector('#intake-form');
       const s2 = Store.settings();
       let fills = [];
+      let registered = false;
 
       const bagCountEl = form.querySelector('[name=bagCount]');
       const grossEl = form.querySelector('[name=grossKg]');
@@ -763,6 +764,9 @@
         }, 'delivery-create');
 
         VH.audit('delivery.create', 'delivery', delivery.id, `${receiptNo} · ${data.bagCount} bags · ${supplierName(delivery.supplierId)}`);
+        // the load is registered: its draft must never come back
+        registered = true;
+        try { localStorage.removeItem(intakeDraftKey()); } catch { /* ignore */ }
         UI.toast(`Delivery ${receiptNo} registered`, 'ok');
         // Whoever may accept goes straight on to choosing the bays; anyone
         // else sees the delivery waiting for the supervisor.
@@ -790,12 +794,65 @@
       const supNew = form.querySelector('#sup-new');
       if (supNew) supNew.addEventListener('click', () => App.editSupplier(null, (rec) => { supFind.value = ''; fillSuppliers(rec.id); }));
 
+      /* Draft: what has been typed is kept on this device until the load is
+         registered or cleared. Printing on a phone or tablet sends the
+         browser to the background, and the phone often reloads the page on
+         the way back; a reload, a sign-in refresh or leaving the screen must
+         not cost the gate a half-entered truck. */
+      const draftKey = intakeDraftKey();
+      const saveDraft = () => {
+        if (registered) return;
+        const values = {};
+        UI.$$('[name]', form).forEach((el) => { if (el.name) values[el.name] = el.value; });
+        values.supFind = supFind.value;
+        const typed = Object.keys(values).some((k) => k !== 'outcome' && k !== 'biomassType' && k !== 'netKg' && String(values[k] || '').trim() !== '');
+        try {
+          if (typed || fills.some((n) => Number.isFinite(n))) localStorage.setItem(draftKey, JSON.stringify({ at: Date.now(), step, values, fills }));
+          else localStorage.removeItem(draftKey);
+        } catch { /* private window: nothing more can be done */ }
+      };
+      const saveSoon = UI.debounce(saveDraft, 250);
+      form.addEventListener('input', saveSoon);
+      form.addEventListener('change', saveSoon);
+      form.addEventListener('click', (e) => { if (e.target.closest('#step-next, #step-back, [data-step]')) setTimeout(saveDraft, 0); });
+      form.querySelector('#cancel-intake').addEventListener('click', () => { try { localStorage.removeItem(draftKey); } catch { /* ignore */ } });
+      const onHide = () => {
+        if (document.body.contains(form)) { if (!registered) saveDraft(); return; }
+        window.removeEventListener('pagehide', onHide);          // the screen has gone: stop listening
+        document.removeEventListener('visibilitychange', onHide);
+      };
+      window.addEventListener('pagehide', onHide);
+      document.addEventListener('visibilitychange', onHide);
+
+      let draft = null;
+      try { draft = JSON.parse(localStorage.getItem(draftKey) || 'null'); } catch { draft = null; }
+      if (draft && draft.values && Date.now() - (draft.at || 0) < 3 * 864e5) {
+        const v = draft.values;
+        if (v.supFind) { supFind.value = v.supFind; fillSuppliers(v.supplierId); }
+        UI.$$('[name]', form).forEach((el) => {
+          if (el.name in v && el.name !== 'netKg' && v[el.name] !== undefined) el.value = v[el.name];
+        });
+        if (v.supplierId && [...supSel.options].some((o) => o.value === v.supplierId)) supSel.value = v.supplierId;
+        fills = Array.isArray(draft.fills) ? draft.fills.map((n) => (n === null || n === undefined ? undefined : Number(n))) : [];
+        renderFillInputs(); updateWeigh(); updateFill(); updateSerials();
+        showStep(Number(draft.step) || 0, true);
+        UI.toast('Your unfinished load is back where you left it', 'ok');
+      }
+
       form.querySelector('#print-fill-sheet').addEventListener('click', () => {
+        saveDraft();                       // before the browser leaves for the print screen
+        Store.flush();
         const d = UI.formData(form);
         App.printFillSheet({ bagCount: d.bagCount, supplierId: d.supplierId, vehicleNo: d.vehicleNo, biomassType: d.biomassType });
       });
     },
   });
+
+  /** One unfinished Receive form per person, per store (live or demo). */
+  function intakeDraftKey() {
+    const me = Auth.current() || {};
+    return `efpl.intakeDraft.v1.${Store.space}.${String(me.email || me.uid || 'anyone').toLowerCase()}`;
+  }
 
   /* ============================= DELIVERIES ========================== */
   App.register('deliveries', {
