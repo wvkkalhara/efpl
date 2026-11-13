@@ -32,10 +32,14 @@
     'suppliers', 'farmers', 'bags', 'bagIssues', 'deliveries', 'bays',
     'usageRequests', 'qualityIssues', 'payments', 'bagReturns',
   ];
-  // What the owner's "Delete all records everywhere" clears. Kept: staff,
-  // business settings, the bay list (bays empty themselves, since what is in
-  // a bay comes from the deliveries) and the activity log (append-only).
+  // An older, partial clear-out (a wipe mark without `full`) cleared only these.
   const WIPED = SYNCED.filter((c) => c !== 'bays');
+  // "Reset everything" (owner or an administrator) clears every collection,
+  // the bay list, the business settings and the activity log. Only the staff
+  // accounts are kept; the app then starts like a brand-new install.
+  const RESET = SYNCED.concat(['audit']);
+  /** Collections the last clear-out this device has seen covered. */
+  const wipedColls = () => (Store.data.meta.wipeFull ? RESET : WIPED);
   const AUDIT_PATH = 'auditLog';
   const CHUNK = 400;                 // records per upload request
   const FULL_PULL_EVERY_MS = 120000; // background pulls of the whole yard are spaced out
@@ -88,12 +92,14 @@
     const local = Store.data[coll];
     const byId = new Map(local.map((x) => [x.id, x]));
     // after the owner cleared the records, nothing made before that may come back
-    const wipeAt = WIPED.includes(coll) ? ms(Store.data.meta.wipeSeenAt) : 0;
+    const wipeAt = wipedColls().includes(coll) ? ms(Store.data.meta.wipeSeenAt) : 0;
     for (const id of Object.keys(remote)) {
       if (!remote[id] || typeof remote[id] !== 'object' || Array.isArray(remote[id])) continue;
       const r = Store.normalize(coll, Store.clean(remote[id]));
       if (r.id !== id) continue;            // a record must live under its own id
-      if (wipeAt && ms(r.createdAt) <= wipeAt) continue;
+      // Bays are re-made with fixed ids and an old fixed date after a reset,
+      // so a bay counts as new once it has been edited since the reset.
+      if (wipeAt && ms(r.createdAt) <= wipeAt && (coll !== 'bays' || ms(r.updatedAt) <= wipeAt)) continue;
       const mine = byId.get(id);
       if (!mine) {
         local.push(r);
@@ -115,6 +121,8 @@
     if (!remote || typeof remote !== 'object' || !remote.updatedAt) return 0;
     const local = Store.data.settings;
     if (stamp(remote) <= stamp(local)) return 0;
+    // settings saved before a full reset never come back
+    if (Store.data.meta.wipeFull && stamp(remote) <= ms(Store.data.meta.wipeSeenAt)) return 0;
     const r = Store.clean(remote);
     const next = Object.assign({}, CFG.defaults, {
       siteName: local.siteName, siteLocation: local.siteLocation, headOfficeEmail: local.headOfficeEmail,
@@ -296,7 +304,8 @@
     const at = ms(wipe.at);
     const seen = ms(Store.data.meta.wipeSeenAt);
     if (!at || at <= seen) return false;
-    const removed = Store.wipeRecords(WIPED, wipe.at);
+    const full = wipe.full === true;
+    const removed = Store.wipeRecords(full ? RESET : WIPED, wipe.at, { full });
     window.dispatchEvent(new CustomEvent('efpl:data-changed', { detail: { wipe: true } }));
     window.dispatchEvent(new CustomEvent('efpl:wiped', { detail: { at: wipe.at, by: wipe.by || '', removed } }));
     return true;
@@ -745,10 +754,12 @@
         const remote = await FB.get(AUDIT_PATH, token, { orderBy: '"$key"', limitToLast: String(limit) });
         if (!remote || typeof remote !== 'object') return { ok: true, added: 0 };
         const have = new Set(Store.data.audit.map((a) => a.id));
+        const resetAt = Store.data.meta.wipeFull ? ms(Store.data.meta.wipeSeenAt) : 0;
         let added = 0;
         for (const id of Object.keys(remote)) {
           const r = Store.clean(remote[id]);
           if (!r || typeof r !== 'object' || r.id !== id || have.has(id)) continue;
+          if (resetAt && ms(r.createdAt || r.at) <= resetAt) continue;   // from before the reset
           Store.data.audit.push(r);
           added++;
         }
@@ -773,33 +784,46 @@
       return Store.data.config.remote;
     },
 
+    /** Who may reset everything: the owner, or an administrator (not the preview). */
+    canReset() {
+      const me = Auth().current();
+      if (!me || me.mode === 'preview' || Store.space === 'demo') return false;
+      return Auth().isSuper(me) || Auth().role() === 'admin';
+    },
+
     /**
-     * Owner only: delete the records in the cloud and on every device.
-     *   1. delete them in the cloud (one request: all or nothing);
-     *   2. leave the "cleared at" mark, which tells every other device to
+     * Owner or administrator: reset the system to brand new, in the cloud
+     * and on every device. Everything goes (all records, the bay list, the
+     * business settings and the activity log); only the staff accounts stay.
+     *   1. delete the records and settings in the cloud (one request);
+     *   2. delete the activity log in the cloud;
+     *   3. leave the "reset at" mark, which tells every other device to
      *      clear its copy and never take back anything made before it;
-     *   3. delete once more, in case a device uploaded in between;
-     *   4. clear this device and wake the others.
+     *   4. delete once more, in case a device uploaded in between;
+     *   5. clear this device and wake the others.
      * Errors say exactly how far it got.
      */
     async wipeEverywhere() {
       const me = Auth().current();
-      if (!Auth().isSuper(me)) throw new Error('Only the owner can delete the records');
-      if (me.mode === 'preview' || Store.space === 'demo') throw new Error('Not in the demo');
-      if (navigator.onLine === false) throw new Error('No connection. Connect to the internet, then try again: the records have to be deleted in the cloud.');
+      if (me && (me.mode === 'preview' || Store.space === 'demo')) throw new Error('Not in the demo');
+      if (!Sync.canReset()) throw new Error('Only the owner or an administrator can reset everything');
+      if (navigator.onLine === false) throw new Error('No connection. Connect to the internet, then try again: everything has to be deleted in the cloud.');
       const token = await Auth().idToken();
       if (!token) throw new Error('Sign in again, then try again.');
       const at = new Date().toISOString();
-      const wipe = { at, by: me.email || '' };
-      const nothing = Object.fromEntries(WIPED.map((c) => [c, null]));
+      const wipe = { at, by: me.email || '', full: true };
+      const nothing = Object.fromEntries(SYNCED.concat(['settings']).map((c) => [c, null]));
       try { await FB.patch(CFG.syncPath, nothing, token); } catch (err) {
         throw new Error(`Nothing was deleted. ${err.code === 'NETWORK' ? 'The connection dropped.' : err.message} Try again.`);
       }
-      try { await FB.patch(CFG.configPath, { wipe }, token); } catch (err) {
-        throw new Error('The records were deleted in the cloud, but the other devices could not be told yet, so they still show their copy. Press the button again to finish.');
+      try { await FB.put(AUDIT_PATH, null, token); } catch (err) {
+        throw new Error(`The records were deleted in the cloud, but the activity log was not (${err.code === 'NETWORK' ? 'the connection dropped' : err.message}). Press the button again to finish.`);
+      }
+      try { await FB.put(`${CFG.configPath}/wipe`, wipe, token); } catch (err) {
+        throw new Error('Everything was deleted in the cloud, but the other devices could not be told yet, so they still show their copy. Press the button again to finish.');
       }
       try { await FB.patch(CFG.syncPath, nothing, token); } catch { /* the mark already stops old records coming back */ }
-      const removed = Store.wipeRecords(WIPED, at);
+      const removed = Store.wipeRecords(RESET, at, { full: true });
       try { await FB.patch(CFG.syncPath, { pulse: { at, by: Store.data.meta.deviceId } }, token); } catch { /* the others find out at their next check */ }
       window.dispatchEvent(new CustomEvent('efpl:data-changed', { detail: { wipe: true } }));
       return { at, removed };

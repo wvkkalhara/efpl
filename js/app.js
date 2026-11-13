@@ -98,8 +98,9 @@
       // The owner deleted all records everywhere: redraw and say so.
       window.addEventListener('efpl:wiped', (e) => {
         if (!document.querySelector('.app-shell')) return;
-        const by = (e.detail && e.detail.by) || 'The owner';
-        UI.toast(`${by} cleared all records. This device has been cleared too.`, 'warn', 8000);
+        const by = (e.detail && e.detail.by) || 'An administrator';
+        UI.toast(`${by} reset the system. This device has been cleared too.`, 'warn', 8000);
+        if (this.ensureBays) this.ensureBays();
         this.render();
       });
       // Live screens (activity log, staff list) refresh themselves on every sync round.

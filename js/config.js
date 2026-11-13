@@ -1,5 +1,5 @@
 /* =====================================================================
-   EnerFab Biomass Storage — configuration
+   EnerFab Biomass Storage â€” configuration
    ---------------------------------------------------------------------
    The Firebase "apiKey" below is a *public identifier*, not a secret:
    Google ships it inside every web app. What actually protects your data
@@ -8,7 +8,7 @@
    ===================================================================== */
 window.EFPL_CONFIG = {
   appName: 'EnerFab Biomass Storage',
-  version: '1.9.3',
+  version: '1.9.4',
   build: '2026.11',
 
   /* ---- Firebase project (efpl-2feb8) ---- */
@@ -36,7 +36,7 @@ window.EFPL_CONFIG = {
      opens the app as the owner WITHOUT contacting Firebase. It exists so
      the system can be demonstrated with no signal and no real accounts.
      SET THIS TO false BEFORE GO-LIVE.                                  */
-  allowLocalPreview: false,     // the owner can switch the demo on from Administration → Subscription
+  allowLocalPreview: false,     // the owner can switch the demo on from Administration â†’ Subscription
 
   /* ---- Ownership ---- */
   superAdminEmails: ['w.v.k.kalhara@gmail.com'],
@@ -62,7 +62,7 @@ window.EFPL_CONFIG = {
     moistureCalKg1: 18, moistureCalPct1: 20,
     moistureCalKg2: 36, moistureCalPct2: 60,
     moistureWarnPct: 30,      // "damp" from here
-    moistureHighPct: 45,      // "wet" from here — a reason to deduct, never to reject
+    moistureHighPct: 45,      // "wet" from here â€” a reason to deduct, never to reject
     // Taking money off for moisture: OFF. On this site loads are not wet;
     // the problem is bags not filled fully (the fill check and the reason
     // "Bags are not filled fully"). An administrator can switch these on.
@@ -86,7 +86,7 @@ window.EFPL_CONFIG = {
 
   biomassTypes: [
     // The starting list. More are added in the app (Receive biomass, or
-    // Administration → Business settings) — no code change needed.
+    // Administration â†’ Business settings) â€” no code change needed.
     { id: 'GLIRICIDIA', label: 'Gliricidia' },
     { id: 'CINNAMON', label: 'Cinnamon' },
     { id: 'OTHER', label: 'Other' },

@@ -3,6 +3,20 @@
 All notable changes to the EnerFab Biomass Storage system.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.9.4] — 2026-11-13
+
+### Changed
+
+* **Reset everything (keep accounts).** Administration → Data & sync →
+  Danger zone. The owner **or an administrator** can now reset the system
+  to brand new, in the cloud and on every device: every record, the bay
+  list, the business settings and the activity log are deleted. Only the
+  staff accounts and their roles stay. A backup file is downloaded first,
+  and the fresh activity log starts with one entry saying who reset it.
+  Nobody else sees the button, and the database rules refuse it for anyone
+  else. **Publish the new `firebase.rules.json`** for administrators to be
+  able to do it.
+
 ## [1.9.3] — 2026-11-13
 
 ### Changed

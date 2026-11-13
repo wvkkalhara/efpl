@@ -7,6 +7,10 @@
       ".write": "auth != null && (auth.token.email === 'w.v.k.kalhara@gmail.com' && auth.token.email_verified === true)",
       "subscription": {
         ".validate": "newData.hasChildren(['status','updatedAt']) && (newData.child('status').val() === 'ACTIVE' || newData.child('status').val() === 'SUSPENDED')"
+      },
+      "wipe": {
+        ".write": "auth != null && ((auth.token.email === 'w.v.k.kalhara@gmail.com' && auth.token.email_verified === true) || (root.child('users').child(auth.uid).child('role').isString() && root.child('users').child(auth.uid).child('role').val().matches(/^(admin)$/) && root.child('users').child(auth.uid).child('active').val() !== false))",
+        ".validate": "newData.hasChildren(['at', 'by']) && newData.child('at').isString() && newData.child('by').isString()"
       }
     },
     "users": {
@@ -30,7 +34,8 @@
       }
     },
     "auditLog": {
-      ".read": "auth != null && ((auth.token.email === 'w.v.k.kalhara@gmail.com' && auth.token.email_verified === true) || (root.child('users').child(auth.uid).child('role').isString() && root.child('users').child(auth.uid).child('role').val().matches(/^(admin|supervisor|auditor)$/) && root.child('users').child(auth.uid).child('active').val() !== false))",
+      ".write": "auth != null && !newData.exists() && ((auth.token.email === 'w.v.k.kalhara@gmail.com' && auth.token.email_verified === true) || (root.child('users').child(auth.uid).child('role').isString() && root.child('users').child(auth.uid).child('role').val().matches(/^(admin)$/) && root.child('users').child(auth.uid).child('active').val() !== false))",
+      ".read":"auth != null && ((auth.token.email === 'w.v.k.kalhara@gmail.com' && auth.token.email_verified === true) || (root.child('users').child(auth.uid).child('role').isString() && root.child('users').child(auth.uid).child('role').val().matches(/^(admin|supervisor|auditor)$/) && root.child('users').child(auth.uid).child('active').val() !== false))",
       "$entry": {
         ".write": "auth != null && (!data.exists() || data.child('by').val() === newData.child('by').val()) && newData.exists() && (root.child('users').child(auth.uid).child('role').isString() && root.child('users').child(auth.uid).child('role').val().matches(/^(admin|supervisor|storekeeper|operator|accounts|auditor)$/) && root.child('users').child(auth.uid).child('active').val() !== false)",
         ".validate": "newData.hasChildren(['id', 'at', 'by', 'action']) && newData.child('id').val() === $entry && newData.child('by').isString() && newData.child('by').val().toLowerCase() === auth.token.email.toLowerCase()"

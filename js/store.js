@@ -458,12 +458,14 @@
     },
 
     /**
-     * The owner cleared the records everywhere (Administration → Data & sync).
+     * The owner or an administrator cleared the records everywhere
+     * (Administration → Data & sync). With `full`, it is a reset to brand
+     * new: the settings return to the defaults as well.
      * Empty those collections on this device and forget their pending
      * uploads, so nothing old is sent back up. Anything made on this device
      * AFTER the clear-out (offline work) is kept. Numbering starts again.
      */
-    wipeRecords(colls, atISO) {
+    wipeRecords(colls, atISO, { full = false } = {}) {
       const ms = (s) => (typeof s === 'string' && s ? Date.parse(s) || 0 : 0);   // Date.parse(0) would be the year 2000
       const at = ms(atISO);
       const after = (r) => ms(r && r.createdAt) > at;
@@ -475,9 +477,19 @@
       }
       const keepIds = new Set(colls.flatMap((c) => this.data[c].map((r) => `${c}:${r.id}`)));
       this.data.outbox = (this.data.outbox || []).filter((o) => !colls.includes(o.coll) || keepIds.has(`${o.coll}:${o.id}`));
+      if (full) {
+        // a full reset: business settings go back to the factory defaults too
+        // (unless someone already saved new ones on this device after the reset)
+        if (ms(this.data.settings && this.data.settings.updatedAt) <= at) {
+          this.data.settings = blankDoc().settings;
+          this.migrateSettings();
+          this.data.outbox = this.data.outbox.filter((o) => o.coll !== 'settings');
+        }
+      }
       this.data.counters = {};
       this.bumpCounters();
       this.data.meta.wipeSeenAt = atISO;
+      this.data.meta.wipeFull = full;
       this.flush();
       this.notify('wipe');
       return removed;

@@ -1534,10 +1534,10 @@
               <div class="divider"></div>
               <div class="danger-zone">
                 <p class="small t-danger"><b>Danger zone</b></p>
-                ${Auth.isSuper(Auth.current()) && (Auth.current() || {}).mode !== 'preview' ? `
-                  <p class="small">Delete <b>every record</b> in the cloud and on <b>every device</b>: deliveries, payments, bags, suppliers, gasifier issues, quality issues and returns. Kept: staff accounts, business settings (prices, moisture), the list of bays (they become empty) and the activity log. A backup file is downloaded first. This cannot be undone.</p>
-                  <div class="row-actions"><button class="nm-btn danger" id="wipe-all">Delete all records everywhere</button></div>`
-                  : '<p class="muted small">Deleting all records is kept for the owner of the system.</p>'}
+                ${Sync.canReset() ? `
+                  <p class="small">Reset the whole system to <b>brand new</b>, in the cloud and on <b>every device</b>. Deleted: every delivery, payment, bag, supplier, farmer, gasifier request, quality issue and return, the bay list, the business settings (prices, moisture) and the <b>activity log</b>. Kept: <b>only the staff accounts</b> and their roles. A backup file is downloaded first. This cannot be undone.</p>
+                  <div class="row-actions"><button class="nm-btn danger" id="wipe-all">Reset everything (keep accounts)</button></div>`
+                  : '<p class="muted small">Resetting everything is kept for the owner and administrators.</p>'}
               </div>
             </div>
           </section>`,
@@ -1819,18 +1819,20 @@
           if (wipe) wipe.addEventListener('click', async () => {
             const counts = ['deliveries', 'payments', 'bags', 'suppliers'].map((c) => `${Store.all(c).length} ${c}`).join(', ');
             const ok = await UI.confirm({
-              title: 'Delete all records everywhere?',
-              message: `This deletes ${counts} and everything else recorded, in the cloud and on every phone, tablet and computer. Staff, settings, the bay list and the activity log are kept. A backup file is downloaded first. It cannot be undone.`,
-              confirmText: 'Delete everything', requireText: 'DELETE EVERYTHING',
+              title: 'Reset everything to brand new?',
+              message: `This deletes ${counts}, the bay list, the business settings, the activity log and everything else recorded, in the cloud and on every phone, tablet and computer. Only the staff accounts are kept. A backup file is downloaded first. It cannot be undone.`,
+              confirmText: 'Reset everything', requireText: 'DELETE EVERYTHING',
             });
             if (!ok) return;
             // a copy first, always
-            UI.download(`enerfab-biomass-backup-before-delete-${D.todayISO()}.json`, JSON.stringify(App.exportData(), null, 2));
-            wipe.disabled = true; wipe.textContent = 'Deleting…';
+            UI.download(`enerfab-biomass-backup-before-reset-${D.todayISO()}.json`, JSON.stringify(App.exportData(), null, 2));
+            wipe.disabled = true; wipe.textContent = 'Resetting…';
             try {
               const res = await Sync.wipeEverywhere();
-              VH.audit('data.wipe', 'data', 'all', `All records deleted everywhere (${res.removed} on this device). Backup downloaded first.`);
-              UI.toast('All records deleted, here and on every device. A backup was downloaded first.', 'ok', 7000);
+              // the one entry in the fresh log: who reset the system, and when
+              VH.audit('data.reset', 'data', 'all', `System reset to brand new (${res.removed} records removed on this device). Backup downloaded first.`);
+              if (App.ensureBays) App.ensureBays();
+              UI.toast('Everything was reset, here and on every device. Only the accounts are kept. A backup was downloaded first.', 'ok', 8000);
             } catch (err) {
               UI.toast(err.message, 'danger', 9000);
             }

@@ -204,9 +204,11 @@ async function run() {
     return toasts() === before;
   });
 
-  results.push('\nOWNER: DELETE ALL RECORDS EVERYWHERE');
+  results.push('\nOWNER / ADMINISTRATOR: RESET EVERYTHING (ONLY ACCOUNTS KEPT)');
   const patches = [];
+  const puts = [];
   FB.patch = async (p, v) => { if (!net.up) throw netError(); patches.push([p, JSON.parse(JSON.stringify(v))]); return {}; };
+  FB.put = async (p, v) => { if (!net.up) throw netError(); puts.push([p, JSON.parse(JSON.stringify(v))]); return {}; };
   const signInAs = (role, email) => {
     window.localStorage.setItem('efpl.session.v1', JSON.stringify({
       uid: `u-${role}`, email, name: role, role, mode: 'online', ownerVerified: role === 'super_admin',
@@ -221,38 +223,62 @@ async function run() {
   };
   fill();
   App.ensureBays();
-  const baysBefore = Store.all('bays').length;
-  const price = Store.settings().unitPrice;
-  await check('an administrator cannot delete everything', async () => {
-    try { await Sync.wipeEverywhere(); return false; } catch (e) { return /owner/i.test(e.message) && Store.all('deliveries').length > 0; }
+  Store.patchSettings({ unitPrice: 987654, siteName: 'Changed site' });
+  Store.add('audit', { at: new Date().toISOString(), by: 'kasun.perera@efpl.org', action: 'test.entry' });
+  const usersBefore = Store.all('users').length;
+  signInAs('supervisor', 'sup@efpl.org');
+  await check('a supervisor cannot reset everything (no button, refused)', async () => {
+    if (Sync.canReset()) return false;
+    try { await Sync.wipeEverywhere(); return false; } catch (e) { return /owner or an administrator/i.test(e.message) && Store.all('deliveries').length > 0; }
   });
-  signInAs('super_admin', 'w.v.k.kalhara@gmail.com');
+  signInAs('admin', 'kasun.perera@efpl.org');
+  await check('an administrator may reset everything', async () => Sync.canReset());
   await check('with no connection nothing is deleted, and it says so', async () => {
     net.up = false;
-    patches.length = 0;
+    patches.length = 0; puts.length = 0;
     try { await Sync.wipeEverywhere(); return false; } catch (e) {
       net.up = true;
-      return /Nothing was deleted/.test(e.message) && Store.all('deliveries').length > 0 && patches.length === 0;
+      return /Nothing was deleted/.test(e.message) && Store.all('deliveries').length > 0 && patches.length === 0 && puts.length === 0;
     }
   });
   let wipeAt = null;
-  await check('the owner deletes in the cloud first, then tells every device', async () => {
-    patches.length = 0;
+  await check('it deletes records, bays, settings and the activity log in the cloud, then tells every device', async () => {
+    patches.length = 0; puts.length = 0;
     const res = await Sync.wipeEverywhere();
     wipeAt = res.at;
-    const [first, second] = patches;
-    return first[0] === 'biomass' && first[1].deliveries === null && first[1].payments === null && first[1].suppliers === null && first[1].bags === null
-      && !('bays' in first[1]) && !('settings' in first[1]) && !('users' in first[1])
-      && second[0] === 'appConfig' && second[1].wipe && second[1].wipe.at === res.at && /kalhara/.test(second[1].wipe.by)
+    const first = patches[0];
+    const mark = puts.find((p) => p[0] === 'appConfig/wipe');
+    return first[0] === 'biomass' && ['deliveries', 'payments', 'suppliers', 'bags', 'bays', 'farmers', 'settings'].every((c) => first[1][c] === null)
+      && !('users' in first[1])
+      && puts.some((p) => p[0] === 'auditLog' && p[1] === null)
+      && !!mark && mark[1].at === res.at && mark[1].full === true && /kasun/.test(mark[1].by)
+      && !puts.some((p) => /^users/.test(p[0])) && !patches.some((p) => /^users/.test(p[0]))
       && patches.some((p) => p[0] === 'biomass' && p[1].pulse);
   });
-  await check('this device is cleared; staff, settings and the bay list are kept', async () => {
-    return ['deliveries', 'payments', 'suppliers', 'bags'].every((c) => Store.all(c).length === 0)
-      && Store.all('bays').length === baysBefore && Store.settings().unitPrice === price && Store.all('users').length > 0
-      && !(Store.data.outbox || []).some((o) => ['deliveries', 'payments', 'suppliers'].includes(o.coll))
-      && Store.data.meta.wipeSeenAt === wipeAt;
+  await check('this device is brand new; only the accounts are kept', async () => {
+    const left = ['deliveries', 'payments', 'suppliers', 'bags', 'audit'].filter((c) => Store.all(c).length);
+    // the app puts the 30 starting bays back straight away (fresh, empty ones)
+    const oldBays = Store.all('bays').filter((b) => Date.parse(b.updatedAt) > Date.parse('2026-01-02'));
+    const queued = (Store.data.outbox || []).filter((o) => ['deliveries', 'payments', 'suppliers', 'audit', 'settings'].includes(o.coll));
+    const s = Store.settings();
+    const bad = [];
+    if (left.length) bad.push(`still there: ${left.join(', ')}`);
+    if (oldBays.length) bad.push(`${oldBays.length} edited bays kept`);
+    if (s.unitPrice === 987654 || s.siteName === 'Changed site' || s.updatedAt) bad.push('settings not reset');
+    if (Store.all('users').length !== usersBefore || !usersBefore) bad.push('accounts changed');
+    if (queued.length) bad.push(`${queued.length} old uploads still queued`);
+    if (Store.data.meta.wipeSeenAt !== wipeAt || Store.data.meta.wipeFull !== true) bad.push('reset mark not kept');
+    if (bad.length) throw new Error(bad.join('; '));
   });
   await check('numbering starts again at 0001', async () => Store.nextSeq('receipt', 1) === 1);
+  await check('the starting bays are there again, empty', async () => { App.ensureBays(); return Store.all('bays').length === 30; });
+  await check('old settings and old log entries in the cloud are not taken back', async () => {
+    const old = new Date(Date.parse(wipeAt) - 60e3).toISOString();
+    Sync._mergeSettings({ updatedAt: old, unitPrice: 987654 });
+    return Store.settings().unitPrice !== 987654;
+  });
+  signInAs('super_admin', 'w.v.k.kalhara@gmail.com');
+  await check('the owner may reset everything too', async () => Sync.canReset());
 
   results.push('\nANOTHER DEVICE SEES THE CLEAR-OUT');
   // pretend to be a second device that still has the old records, plus one load typed offline afterwards
@@ -266,11 +292,25 @@ async function run() {
   Store.data.outbox[Store.data.outbox.length - 1].id = 'del_new';
   let told = null;
   window.addEventListener('efpl:wiped', (e) => { told = e.detail; }, { once: true });
-  FB.get = async (p) => { if (!net.up) throw netError(); return p === 'appConfig' ? { wipe: { at: wipeAt, by: 'w.v.k.kalhara@gmail.com' } } : null; };
-  await check('it clears its old records by itself and says who did it', async () => {
+  // …and still has its old log entry and old prices
+  const oldAudit = { id: 'aud_old', at: old, createdAt: old, updatedAt: old, by: 'x@efpl.org', action: 'old' };
+  Store.data.audit.push(oldAudit);
+  Store.data.settings.unitPrice = 987654; Store.data.settings.updatedAt = old;
+  FB.get = async (p) => {
+    if (!net.up) throw netError();
+    if (p === 'appConfig') return { wipe: { at: wipeAt, by: 'kasun.perera@efpl.org', full: true } };
+    if (p === 'auditLog') return { aud_old: oldAudit };
+    return null;
+  };
+  await check('it clears its old records, log and settings by itself and says who did it', async () => {
     await Sync.now('stream');
-    return !Store.byId('deliveries', 'del_old') && !!told && /kalhara/.test(told.by)
+    return !Store.byId('deliveries', 'del_old') && !!told && /kasun/.test(told.by)
+      && !Store.byId('audit', 'aud_old') && Store.settings().unitPrice !== 987654
       && !(Store.data.outbox || []).some((o) => o.id === 'del_old');
+  });
+  await check('an old log entry still in the cloud is not taken back', async () => {
+    await Sync.pullAudit();
+    return !Store.byId('audit', 'aud_old');
   });
   await check('work typed offline after the clear-out is kept and still uploads', async () => {
     const sent = patches.some((p) => /deliveries$/.test(p[0]) && p[1] && p[1].del_new);
