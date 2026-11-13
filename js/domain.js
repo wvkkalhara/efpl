@@ -191,47 +191,56 @@
   }
 
   /**
-   * Requirement 3 — the fill check.
-   * A random sample of bags is emptied into a cylindrical measuring drum.
-   * Average fill height drives the unit price:
-   *   >= 90 %  -> full price (Rs 300)
-   *   <  90 %  -> reduced price (Rs 270), or the supplier re-fills the bags
-   *               and they are counted and sampled again
-   * A load is never turned away: it is always received, and anything else
-   * that is wrong with it is handled as a percentage deduction (below).
+   * Requirement 3 — the fill check (capacity).
+   * A random 5 % of the bags is emptied into the measuring drum and the
+   * fill of each is typed in. The bags must be 100 % full for the full price:
+   *   100 % or more -> full price (Rs 300), never more;
+   *   below 100 %   -> the price follows the fill: the part that is missing
+   *                    is taken off (92 % full -> 8 % off -> Rs 276 a bag).
+   * Moisture is measured too, but it never cuts the price.
+   * The result is kept as: unitPrice = the full price, cutPct = the percent
+   * to take off, payPerBag = what one bag is paid. At acceptance the cut is
+   * filled in as the "Take off" percent, so it is applied once, visibly.
    */
+  const FULL_FROM_PCT = 100;
   function evaluateFillCheck(opts) {
     const settings = opts.settings || {};
     const bagCount = Number(opts.bagCount) || 0;
-    const threshold = Number(settings.fillThresholdPct) || 90;
     const fullPrice = Number(settings.unitPrice) || 300;
-    const reduced = Number(settings.reducedUnitPrice) || 270;
     const fills = (opts.fills || []).map((n) => Math.max(0, Math.min(150, Number(n) || 0)));
     const avg = fills.length ? Math.round((fills.reduce((a, b) => a + b, 0) / fills.length) * 10) / 10 : null;
 
-    let decision, unitPrice, action;
+    let decision, cutPct = 0, action;
     if (avg === null) {
-      decision = 'NOT_CHECKED'; unitPrice = fullPrice; action = 'Record at least one fill height.';
-    } else if (avg >= 100) {
-      decision = 'PASS'; unitPrice = fullPrice; action = 'Accept at the full contract price.';
-    } else if (avg >= threshold) {
-      decision = 'PASS_MARGINAL'; unitPrice = fullPrice;
-      action = `Just above the ${threshold}% agreement — accept at full price, note the reading.`;
+      decision = 'NOT_CHECKED'; action = 'Type how full each sample bag was.';
+    } else if (avg >= FULL_FROM_PCT) {
+      decision = 'PASS'; action = 'The bags are full: full price.';
     } else {
-      decision = 'REDUCED_PRICE'; unitPrice = reduced;
-      action = `Below the ${threshold}% agreement — the whole batch is paid at Rs ${reduced}/bag. If the supplier re-fills the bags instead, count and sample them again.`;
+      decision = 'SHORT';
+      cutPct = Math.round((FULL_FROM_PCT - avg) * 10) / 10;
+      action = `The bags are ${avg}% full on average, so ${cutPct}% is taken off: Rs ${round2((fullPrice * (100 - cutPct)) / 100)} a bag instead of Rs ${fullPrice}. If the supplier fills the bags more, count and check them again.`;
     }
-
-    if (opts.outcome === 'OVERRIDE_FULL_PRICE') { decision = 'OVERRIDDEN'; unitPrice = fullPrice; }
+    if (opts.outcome === 'OVERRIDE_FULL_PRICE') { decision = 'OVERRIDDEN'; cutPct = 0; action = 'Paid the full price anyway, by decision.'; }
+    const payPerBag = round2((fullPrice * (100 - cutPct)) / 100);
 
     return {
       sampleSize: fills.length || sampleSizeFor(bagCount, settings),
-      fills, avgFillPct: avg, thresholdPct: threshold,
-      decision, unitPrice, fullPrice, reducedPrice: reduced, action,
-      amount: round2(bagCount * unitPrice),
+      fills, avgFillPct: avg, thresholdPct: FULL_FROM_PCT,
+      decision, unitPrice: fullPrice, fullPrice, cutPct, payPerBag, action,
+      amount: round2(bagCount * payPerBag),
       spread: fills.length ? round2(Math.max.apply(null, fills) - Math.min.apply(null, fills)) : null,
     };
   }
+
+  /**
+   * What one bag of a delivery is paid by its fill check. Fill checks made
+   * before the 100 % rule kept a reduced unit price (Rs 270) instead.
+   */
+  const fillPayPerBag = (fc, fallback) => {
+    if (!fc) return Number(fallback) || 0;
+    if (fc.payPerBag !== undefined && fc.payPerBag !== null) return Number(fc.payPerBag);
+    return Number(fc.unitPrice) || Number(fallback) || 0;
+  };
 
   /* ---------------------------- moisture ----------------------------- */
   /**
@@ -300,18 +309,6 @@
    * of the agreement is still received, and a percentage is taken off the
    * batch value instead.
    */
-  /**
-   * The deduction the app proposes from the moisture reading. It is only a
-   * starting point: the supervisor can change or clear it before accepting.
-   */
-  function suggestedDeduction(moisturePct, settings) {
-    const s = settings || {};
-    const band = moistureBand(moisturePct, s);
-    const pick = (v, d) => (Number.isFinite(Number(v)) && v !== null && v !== '' ? Math.max(0, Math.min(100, Number(v))) : d);
-    const pct = band === 'HIGH' ? pick(s.deductWetPct, 10) : band === 'WARN' ? pick(s.deductDampPct, 5) : 0;
-    return { pct, band, reason: pct ? `${band === 'HIGH' ? 'Wet' : 'Damp'} load: moisture ${moisturePct}% from the bag weight` : '' };
-  }
-
   function applyDeduction(bags, unitPrice, deductionPct) {
     const pct = Math.max(0, Math.min(100, Number(deductionPct) || 0));
     const gross = round2((Number(bags) || 0) * (Number(unitPrice) || 0));
@@ -460,7 +457,7 @@
     TASKS, EDITABLE_ROLES, permissionsFor, isRoleCustomised, roleSummary,
     BAG_STATUS, BAG_STATUS_LABEL, BAG_TRANSITIONS, canTransition,
     round2, sampleSizeFor, evaluateFillCheck, moistureFromWeight, moistureBand,
-    moistureCalibration, weightForMoisture, moistureHighPct, MOISTURE_LABEL, moistureTone, applyDeduction, suggestedDeduction,
+    moistureCalibration, weightForMoisture, moistureHighPct, MOISTURE_LABEL, moistureTone, applyDeduction, fillPayPerBag, FULL_FROM_PCT,
     driedBagKg, daysSince, moistureReadyPct,
     weighTruck, avgBagWeight, PAYMENT_FLOW, PAYMENT_LABEL, paymentCanGo, paymentActionLabel,
     bagSerial, serialRange, parseSerialNumber, traceBag, code39SVG,

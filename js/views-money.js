@@ -103,7 +103,7 @@
           </div>
           <div class="nm-inset pad-sm">
             <h4>Pay to</h4>
-            ${VH.bankHtml(sup)}
+            ${p.status === 'PAID' ? VH.bankHtml(sup) : VH.bankEditor(sup, { saveButton: true })}
             ${d && (d.allocations || []).length ? `<h4>Put in bays</h4><p>${d.allocations.map((a) => `${esc(a.bayCode)} (${a.bags})`).join(', ')}</p>` : ''}
           </div>
           <div class="nm-inset pad-sm">
@@ -123,11 +123,31 @@
         ${canRelease ? '<button class="nm-btn primary" data-act="release">Send to Head Office</button>' : ''}
         ${canPay ? '<button class="nm-btn primary" data-act="paid">Mark as paid</button>' : ''}`,
       onMount(el, close) {
+        const readBank = VH.wireBankEditor(el);
+        // Save typed bank details; false if they are not right yet.
+        const saveBank = () => {
+          const b = readBank();
+          if (!b) return true;
+          if (b.error) { UI.toast(b.error, 'warn'); return false; }
+          VH.saveBank(p.supplierId, b, `on payment ${p.paymentNo}`);
+          return true;
+        };
+        const sb = el.querySelector('[data-bank-save]');
+        if (sb) sb.addEventListener('click', () => {
+          if (!readBank()) return;
+          if (!saveBank()) return;
+          UI.toast('Bank details saved for this supplier', 'ok');
+          close(); App.refresh(); App.openPayment(p.id);
+        });
         el.addEventListener('click', (e) => {
           const btn = e.target.closest('[data-act]');
           if (!btn) return;
           const act = btn.dataset.act;
           if (act === 'slip') return App.printPaymentSlip(p.id);
+          if (['approve', 'release', 'paid'].includes(act)) {
+            if (!saveBank()) return;
+            if (!VH.bankReady(Store.byId('suppliers', p.supplierId))) return UI.toast('Add the supplier\'s bank details first (bank and account number)', 'warn');
+          }
           if (act === 'invoice') return App.printInvoice(p.deliveryId);
           if (act === 'deduct') { close(); return App.deductionFlow(p.id); }
           const now = new Date().toISOString();
@@ -167,11 +187,11 @@
     UI.modal({
       title: `Amount taken off ${p.paymentNo}`,
       body: `<div class="form-errors" role="alert"></div>
-        <p class="muted">The load has been received. This takes a percentage off its value, for example for wet biomass.</p>
-        ${d && d.avgBagKg ? VH.moistureScale(d.avgBagKg, { compact: true }) : ''}
+        <p class="muted">Take a percent off this payment, for example when the bags were not filled fully.</p>
+        ${d && d.fillCheck && d.fillCheck.avgFillPct !== null && d.fillCheck.avgFillPct !== undefined ? `<div class="fill-note ${d.fillCheck.avgFillPct < 100 ? 'is-low' : ''}">Fill check: bags <b>${esc(d.fillCheck.avgFillPct)}%</b> full on average${d.fillCheck.cutPct ? `, so ${d.fillCheck.cutPct}% off` : ''}. Full price ${money(p.unitPrice)} a bag.</div>` : ''}
         <div class="grid-2" style="margin-top:12px">
-          ${UI.field('Deduct from this batch (%)', UI.input('deductionPct', { type: 'number', min: 0, max: 100, step: '0.5', value: p.deductionPct || 0 }))}
-          ${UI.field('Reason for the deduction', UI.input('deductionReason', { value: p.deductionReason || '', placeholder: 'Wet load, foreign material…' }))}
+          ${UI.field('Take off (%)', UI.input('deductionPct', { type: 'number', min: 0, max: 100, step: '0.5', value: p.deductionPct || 0 }))}
+          ${UI.field('Why', UI.input('deductionReason', { value: p.deductionReason || Store.settings().defaultDeductionReason || 'Bags are not filled fully', placeholder: 'Bags are not filled fully' }))}
         </div>
         <div class="calc-strip" id="deduct-out"></div>`,
       footer: '<button class="nm-btn" data-close>Cancel</button><button class="nm-btn primary" data-act="save">Save deduction</button>',
@@ -394,7 +414,7 @@
       <p class="meta">${esc([s.address, s.phone, s.nic ? `NIC ${s.nic}` : ''].filter(Boolean).join(' · '))}<br/>Pay to: ${esc(VH.bankText(s))}</p>
       <table><thead><tr><th>Receipt</th><th>Date</th><th>Bags</th><th>Net kg</th><th>Fill</th><th>Unit price</th><th>Deducted</th><th>Payable</th></tr></thead>
         <tbody>${deliveries.map((d) => `<tr><td>${esc(d.receiptNo)}</td><td>${esc(dOnly(d.deliveredAt))}</td><td>${d.bagCount}</td><td>${d.netKg}</td>
-          <td>${d.fillCheck && d.fillCheck.avgFillPct !== null ? d.fillCheck.avgFillPct + '%' : '—'}</td><td>${money(d.fillCheck ? d.fillCheck.unitPrice : 0)}</td>
+          <td>${d.fillCheck && d.fillCheck.avgFillPct !== null ? d.fillCheck.avgFillPct + '%' : '—'}</td><td>${money(D.fillPayPerBag(d.fillCheck))}</td>
           <td>${d.deductionPct ? `${d.deductionPct}%` : '—'}</td><td>${money(VH.payable(d))}</td></tr>`).join('')}</tbody></table>
       <h2>Payments</h2>
       <table><thead><tr><th>Payment</th><th>Status</th><th>Net</th><th>Date</th></tr></thead>
@@ -465,8 +485,8 @@
         <div id="qi-trace" class="calc-strip"></div>
         <div class="grid-2">
           ${UI.field('Category', UI.select('category', [
-            { value: 'MOISTURE', label: 'High moisture' }, { value: 'FOREIGN_MATERIAL', label: 'Foreign material' },
-            { value: 'UNDERFILLED', label: 'Under-filled bags' }, { value: 'SPECIES', label: 'Wrong species' },
+            { value: 'UNDERFILLED', label: 'Bags not full (capacity)' }, { value: 'FOREIGN_MATERIAL', label: 'Stones or other material' },
+            { value: 'SPECIES', label: 'Wrong kind of biomass' },
             { value: 'DAMAGED_BAG', label: 'Damaged bag' }, { value: 'OTHER', label: 'Other' },
           ]))}
           ${UI.field('How serious', UI.select('severity', [
@@ -830,7 +850,7 @@
         const payable = sum(deliveries, (d) => VH.payable(d));
         const deducted = sum(deliveries, (d) => d.deductionAmount);
         const gross = sum(deliveries, (d) => (d.fillCheck && d.fillCheck.amount));
-        const reduced = deliveries.filter((d) => d.fillCheck && d.fillCheck.decision === 'REDUCED_PRICE').length;
+        const reduced = deliveries.filter((d) => d.fillCheck && (d.fillCheck.decision === 'REDUCED_PRICE' || d.fillCheck.decision === 'SHORT')).length;
         const withDeduction = deliveries.filter((d) => d.deductionPct > 0).length;
         const avgKgIn = bagsIn ? D.round2(kgIn / bagsIn) : null;
         const avgKgOut = bagsOut ? D.round2(kgOut / bagsOut) : null;
@@ -874,8 +894,88 @@
         for (const d of deliveries) put(Date.parse(d.acceptedAt || d.deliveredAt), d.netKg, d.bagCount, 'in');
         for (const u of usages) put(Date.parse(u.consumedAt), u.totalKg, u.bags, 'out');
 
+        /* ---- how the weight goes off: from real weighings only ---- */
+        const s = Store.settings();
+        const allBays = Store.where('bays', (b) => !b.deleted).sort((a, b) => String(a.code).localeCompare(String(b.code), undefined, { numeric: true }));
+        const periodDays = Math.max(1, Math.round(((Number.isFinite(end) ? Math.min(end, Date.now()) : Date.now()) - (Number.isFinite(start) ? start : first)) / dayMs));
+        const dryRows = [];
+        const AGE = [[0, 7, '0–7 days'], [8, 14, '8–14 days'], [15, 30, '15–30 days'], [31, 60, '31–60 days'], [61, 1e9, 'Over 60 days']];
+        const ageRows = AGE.map(([lo, hi, label]) => ({ label, lo, hi, n: 0, kg: 0 }));
+        const checkRows = [];
+        for (const b of allBays) {
+          const all = VH.bayReadings(b.id);
+          // a reading's age: days since the last load came into that bay before it
+          let lastIn = null;
+          for (const p of all) {
+            if (p.kind === 'in') { lastIn = p.at; continue; }
+            if (!lastIn || !inRange(p.at)) continue;
+            const age = Math.floor((Date.parse(p.at) - Date.parse(lastIn)) / dayMs);
+            const g = ageRows.find((x) => age >= x.lo && age <= x.hi);
+            if (g) { g.n++; g.kg += p.kg; }
+          }
+          const pts = all.filter((p) => inRange(p.at));
+          if (pts.length >= 2) {
+            const a = pts[0], z = pts[pts.length - 1];
+            const span = Math.max(1, (Date.parse(z.at) - Date.parse(a.at)) / dayMs);
+            dryRows.push({ code: b.code, name: b.name, n: pts.length, fromKg: a.kg, toKg: z.kg, fromM: a.moisture, toM: z.moisture,
+              days: Math.round(span), perDay: D.round2((a.kg - z.kg) / span), nowM: (VH.bayNow(b) || {}).moisture });
+          }
+          if (VH.bagsInBay(b.id) > 0 || VH.bayChecks(b.id).some((c) => inRange(c.at))) {
+            const checks = VH.bayChecks(b.id).filter((c) => inRange(c.at));
+            const daysChecked = new Set(checks.map((c) => new Date(c.at).toDateString())).size;
+            const lastC = VH.bayChecks(b.id).slice(-1)[0];
+            // count only the days the bay had stock: from the first load in (or the period start)
+            const firstIn = all.find((p) => p.kind === 'in');
+            const from = Math.max(Number.isFinite(start) ? start : -Infinity, firstIn ? Date.parse(firstIn.at) : -Infinity);
+            const to = Number.isFinite(end) ? Math.min(end, Date.now()) : Date.now();
+            const daysOpen = Number.isFinite(from) ? Math.max(1, Math.ceil((to - from) / dayMs)) : periodDays;
+            checkRows.push({ code: b.code, checks: checks.length, daysChecked, daysOpen, pct: Math.min(100, Math.round((daysChecked / daysOpen) * 100)), last: lastC ? lastC.at : null, lastKg: lastC ? lastC.kg : null });
+          }
+        }
+        for (const g of ageRows) g.avg = g.n ? D.round2(g.kg / g.n) : null;
+
+        // gasifier weighing, by biomass type (one bag weighed × number of bags)
+        const gasType = {};
+        for (const u of usages) {
+          const tw = (u.typeWeights || []).length ? u.typeWeights : [{ type: '—', label: 'Not split by type', bags: u.bags, kg: u.avgBagKg }];
+          for (const x of tw) {
+            const k = x.type || x.label;
+            const g = gasType[k] = gasType[k] || { label: x.label || VH.typeLabel(k), batches: 0, bags: 0, kg: 0 };
+            g.batches++; g.bags += Number(x.bags) || 0; g.kg += (Number(x.bags) || 0) * (Number(x.kg) || 0);
+          }
+        }
+        const gasTypeRows = Object.values(gasType).map((g) => Object.assign(g, { avg: g.bags ? D.round2(g.kg / g.bags) : null })).sort((a, b) => b.kg - a.kg);
+
+        // fill % and what it did to the pay
+        const FILL = [[100, 1e9, '100% or more (full pay)'], [90, 99.99, '90–99%'], [80, 89.99, '80–89%'], [0, 79.99, 'Under 80%']];
+        const fillRows = FILL.map(([lo, hi, label]) => ({ label, lo, hi, loads: 0, bags: 0, gross: 0, paid: 0 }));
+        let noFill = 0;
+        for (const d of deliveries) {
+          const f = d.fillCheck && d.fillCheck.avgFillPct;
+          if (f === null || f === undefined) { noFill++; continue; }
+          const g = fillRows.find((x) => f >= x.lo && f <= x.hi);
+          if (!g) continue;
+          const full = Number(d.fillCheck.fullPrice || d.fillCheck.unitPrice) || 0;
+          g.loads++; g.bags += d.bagCount || 0; g.gross += (d.bagCount || 0) * full; g.paid += VH.payable(d);
+        }
+
+        // month by month
+        const months = {};
+        for (const d of deliveries) {
+          const m = String(d.acceptedAt || d.deliveredAt).slice(0, 7);
+          const g = months[m] = months[m] || { m, loads: 0, bagsIn: 0, kgIn: 0, bagsOut: 0, kgOut: 0, payable: 0 };
+          g.loads++; g.bagsIn += d.bagCount || 0; g.kgIn += d.netKg || 0; g.payable += VH.payable(d);
+        }
+        for (const u of usages) {
+          const m = String(u.consumedAt).slice(0, 7);
+          const g = months[m] = months[m] || { m, loads: 0, bagsIn: 0, kgIn: 0, bagsOut: 0, kgOut: 0, payable: 0 };
+          g.bagsOut += u.bags || 0; g.kgOut += u.totalKg || 0;
+        }
+        const monthRows = Object.values(months).sort((a, b) => b.m.localeCompare(a.m));
+
         return { deliveries, usages, payments, bagsIn, kgIn, bagsOut, kgOut, payable, deducted, gross, reduced, withDeduction,
-          avgKgIn, avgKgOut, payRows, supplierRows, typeRows, bayRows, buckets, step, filtered };
+          avgKgIn, avgKgOut, payRows, supplierRows, typeRows, bayRows, buckets, step, filtered,
+          dryRows, ageRows, checkRows, gasTypeRows, fillRows, noFill, monthRows, periodDays, s };
       }
 
       /* ------------------------------- chart --------------------------- */
@@ -952,7 +1052,69 @@
                 ${r.avgKgIn && r.avgKgOut ? `<tr><th>Bag weight change in store</th><td class="num">—</td><td class="num">${D.round2(r.avgKgOut - r.avgKgIn)} kg</td></tr>` : ''}
               </table>
             </div>
-            <p class="small muted">In: the weight from the weighbridge. Out: the 3-bag average at the gasifier. If bags going out are lighter than bags coming in, the biomass dried in the bay.</p>
+            <p class="small muted">In: the weight from the weighbridge. Out: one bag weighed per type at the gasifier, times the bags. If bags going out are lighter than bags coming in, the biomass dried in the bay.</p>
+          </section>
+
+          <section class="nm-card pad">
+            <div class="card-head"><h3>How the weight goes down in each bay</h3><button class="link" id="csv-drying"><i class="i i-download"></i>CSV</button></div>
+            ${UI.table({
+              rows: r.dryRows, empty: 'A bay needs at least two weighings in this period (a load coming in, a daily check, a test bag or the gasifier).',
+              columns: [
+                { label: 'Bay', render: (x) => `<b>${esc(x.code)}</b>` },
+                { label: 'Weighings', cls: 'num', render: (x) => x.n },
+                { label: 'First → latest bag', cls: 'num', render: (x) => `${x.fromKg} → ${x.toKg} kg` },
+                { label: 'Moisture', cls: 'num', render: (x) => `${x.fromM}% → ${x.toM}%` },
+                { label: 'Over', cls: 'num', render: (x) => `${x.days} day${x.days === 1 ? '' : 's'}` },
+                { label: 'Lost a day, per bag', cls: 'num', render: (x) => `<b class="${x.perDay < 0 ? 't-warn' : ''}">${x.perDay} kg</b>` },
+              ],
+            })}
+            <p class="small muted">Read from real weighings, not the estimate. The app assumes ${r.s.dryingKgPerDay ?? 0.6} kg a day (Business settings). If these figures differ a lot, change that number. A minus figure means the bags got heavier: a new load or rain.</p>
+          </section>
+
+          <section class="cols-2">
+            <div class="nm-card pad">
+              <div class="card-head"><h3>Bag weight by days in the bay</h3><button class="link" id="csv-age"><i class="i i-download"></i>CSV</button></div>
+              <table class="mini"><thead><tr><th>Days since the load came in</th><th class="num">Weighings</th><th class="num">Average bag</th><th class="num">Moisture</th></tr></thead>
+                <tbody>${r.ageRows.map((g) => `<tr><td>${esc(g.label)}</td><td class="num">${g.n}</td><td class="num">${g.avg ? `${g.avg} kg` : '—'}</td><td class="num">${g.avg ? `${D.moistureFromWeight(g.avg, r.s)}%` : '—'}</td></tr>`).join('')}</tbody></table>
+              <p class="small muted">Daily checks, test bags and gasifier weighings, grouped by how long the bags had been in the bay. The longer they wait, the lighter and drier they should be.</p>
+            </div>
+            <div class="nm-card pad">
+              <div class="card-head"><h3>Daily bay checks</h3><button class="link" id="csv-checks"><i class="i i-download"></i>CSV</button></div>
+              <table class="mini"><thead><tr><th>Bay</th><th class="num">Checks</th><th class="num">Days checked (of days with stock)</th><th class="num">Last check</th></tr></thead>
+                <tbody>${r.checkRows.map((c) => `<tr><td>${esc(c.code)}</td><td class="num">${c.checks}</td><td class="num">${c.daysChecked} of ${c.daysOpen} <span class="muted small">(${c.pct}%)</span></td><td class="num">${c.last ? `${esc(dOnly(c.last))}, ${c.lastKg} kg` : '—'}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">No bays with stock.</td></tr>'}</tbody></table>
+              <p class="small muted">A missed day is fine. More checks give a truer drying figure.</p>
+            </div>
+          </section>
+
+          <section class="cols-2">
+            <div class="nm-card pad">
+              <div class="card-head"><h3>Gasifier weighing by type</h3><button class="link" id="csv-gastype"><i class="i i-download"></i>CSV</button></div>
+              <table class="mini"><thead><tr><th>Type</th><th class="num">Batches</th><th class="num">Bags</th><th class="num">One bag, average</th><th class="num">Total</th></tr></thead>
+                <tbody>${r.gasTypeRows.map((g) => `<tr><td>${esc(g.label)}</td><td class="num">${g.batches}</td><td class="num">${g.bags.toLocaleString()}</td><td class="num">${g.avg ? `${g.avg} kg` : '—'}</td><td class="num">${kg(Math.round(g.kg))}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">Nothing went to the gasifier in this period.</td></tr>'}</tbody></table>
+            </div>
+            <div class="nm-card pad">
+              <div class="card-head"><h3>Bag fill and pay</h3><button class="link" id="csv-fill"><i class="i i-download"></i>CSV</button></div>
+              <table class="mini"><thead><tr><th>Bags filled</th><th class="num">Loads</th><th class="num">Bags</th><th class="num">Paid</th><th class="num">Taken off</th></tr></thead>
+                <tbody>${r.fillRows.map((g) => `<tr><td>${esc(g.label)}</td><td class="num">${g.loads}</td><td class="num">${g.bags.toLocaleString()}</td><td class="num">${money(g.paid)}</td><td class="num ${g.gross - g.paid > 0 ? 't-danger' : ''}">${g.gross - g.paid > 0 ? `− ${money(g.gross - g.paid)}` : '—'}</td></tr>`).join('')}</tbody></table>
+              <p class="small muted">100% full gets the full price. Less than 100% is paid less. More than 100% is never paid more.${r.noFill ? ` ${r.noFill} load(s) had no fill check.` : ''}</p>
+            </div>
+          </section>
+
+          <section class="nm-card pad">
+            <div class="card-head"><h3>Month by month</h3><button class="link" id="csv-months"><i class="i i-download"></i>CSV</button></div>
+            ${UI.table({
+              rows: r.monthRows, empty: 'Nothing in this period.',
+              columns: [
+                { label: 'Month', render: (x) => `<b>${esc(new Date(`${x.m}-15T12:00:00`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }))}</b>` },
+                { label: 'Loads', cls: 'num', render: (x) => x.loads },
+                { label: 'Bags in', cls: 'num', render: (x) => x.bagsIn.toLocaleString() },
+                { label: 'Weight in', cls: 'num', render: (x) => kg(Math.round(x.kgIn)) },
+                { label: 'Bag in, avg', cls: 'num', render: (x) => (x.bagsIn ? `${D.round2(x.kgIn / x.bagsIn)} kg` : '—') },
+                { label: 'Bags out', cls: 'num', render: (x) => x.bagsOut.toLocaleString() },
+                { label: 'Bag out, avg', cls: 'num', render: (x) => (x.bagsOut ? `${D.round2(x.kgOut / x.bagsOut)} kg` : '—') },
+                { label: 'Payable', cls: 'num', render: (x) => money(x.payable) },
+              ],
+            })}
           </section>
 
           <section class="cols-2">
@@ -960,8 +1122,8 @@
               <div class="card-head"><h3>Money</h3><button class="link" id="csv-payments"><i class="i i-download"></i>CSV</button></div>
               <table class="mini">
                 <tr><th>Value at the agreed price</th><td class="num">${money(r.gross)}</td></tr>
-                <tr><th>Loads paid at the reduced price</th><td class="num">${r.reduced}</td></tr>
-                <tr><th>Deducted (wet or poor loads)</th><td class="num ${r.deducted ? 't-danger' : ''}">${r.deducted ? '− ' : ''}${money(r.deducted)}</td></tr>
+                <tr><th>Loads with bags not 100% full</th><td class="num">${r.reduced}</td></tr>
+                <tr><th>Taken off (bags not filled fully, other reasons)</th><td class="num ${r.deducted ? 't-danger' : ''}">${r.deducted ? '− ' : ''}${money(r.deducted)}</td></tr>
                 <tr><th>Payable to suppliers</th><th class="num">${money(r.payable)}</th></tr>
               </table>
               <h4>Payments by stage</h4>
@@ -1008,7 +1170,7 @@
         body.querySelector('#csv-movement').addEventListener('click', () => UI.download(`deliveries-${tag}.csv`, UI.toCSV(r.deliveries.map((d) => ({
           receipt: d.receiptNo, date: dOnly(d.acceptedAt || d.deliveredAt), supplier: supplierName(d.supplierId), type: VH.typeLabel(d.biomassType),
           bags: d.bagCount, netKg: d.netKg, avgBagKg: d.avgBagKg || '', moisturePct: d.avgBagKg ? D.moistureFromWeight(d.avgBagKg, Store.settings()) : '',
-          fillPct: d.fillCheck && d.fillCheck.avgFillPct !== null ? d.fillCheck.avgFillPct : '', unitPrice: d.fillCheck ? d.fillCheck.unitPrice : '',
+          fillPct: d.fillCheck && d.fillCheck.avgFillPct !== null ? d.fillCheck.avgFillPct : '', unitPrice: d.fillCheck ? D.fillPayPerBag(d.fillCheck) : '',
           deductionPct: d.deductionPct || 0, deductionReason: d.deductionReason || '', payable: VH.payable(d),
         }))) || 'No deliveries in this period', 'text/csv'));
         body.querySelector('#csv-payments').addEventListener('click', () => UI.download(`payments-${tag}.csv`, UI.toCSV(r.payments.map((p) => ({
@@ -1016,6 +1178,13 @@
           gross: p.grossAmount, deductionPct: p.deductionPct || 0, deducted: p.deductions || 0, payable: p.netAmount, stage: D.PAYMENT_LABEL[p.status] || p.status,
         }))) || 'No payments in this period', 'text/csv'));
         body.querySelector('#csv-stock').addEventListener('click', () => UI.download(`stock-${D.todayISO()}.csv`, UI.toCSV(r.bayRows), 'text/csv'));
+        const csv = (id, name, rows) => body.querySelector(id).addEventListener('click', () => UI.download(`${name}-${tag}.csv`, UI.toCSV(rows) || 'Nothing in this period', 'text/csv'));
+        csv('#csv-drying', 'bay-drying', r.dryRows.map((x) => ({ bay: x.code, weighings: x.n, firstKg: x.fromKg, latestKg: x.toKg, firstMoisture: x.fromM, latestMoisture: x.toM, days: x.days, kgLostPerDay: x.perDay })));
+        csv('#csv-age', 'weight-by-age', r.ageRows.map((g) => ({ daysInBay: g.label, weighings: g.n, avgBagKg: g.avg || '', moisturePct: g.avg ? D.moistureFromWeight(g.avg, r.s) : '' })));
+        csv('#csv-checks', 'bay-checks', r.checkRows.map((c) => ({ bay: c.code, checks: c.checks, daysChecked: c.daysChecked, daysWithStock: c.daysOpen, lastCheck: c.last || '', lastKg: c.lastKg || '' })));
+        csv('#csv-gastype', 'gasifier-by-type', r.gasTypeRows.map((g) => ({ type: g.label, batches: g.batches, bags: g.bags, avgBagKg: g.avg || '', totalKg: Math.round(g.kg) })));
+        csv('#csv-fill', 'fill-and-pay', r.fillRows.map((g) => ({ filled: g.label, loads: g.loads, bags: g.bags, paid: g.paid, takenOff: D.round2(g.gross - g.paid) })));
+        csv('#csv-months', 'by-month', r.monthRows.map((x) => ({ month: x.m, loads: x.loads, bagsIn: x.bagsIn, kgIn: Math.round(x.kgIn), bagsOut: x.bagsOut, kgOut: Math.round(x.kgOut), payable: x.payable })));
         body.querySelector('#csv-suppliers').addEventListener('click', () => UI.download(`suppliers-${tag}.csv`, UI.toCSV(r.supplierRows.map((x) => ({
           supplier: x.name, loads: x.loads, bags: x.bags, netKg: Math.round(x.kg), deducted: x.deducted, payable: x.value, qualityIssues: x.issues,
         }))) || 'No suppliers in this period', 'text/csv'));
@@ -1048,7 +1217,8 @@
       // Live: after every sync round the figures are worked out again, and the
       // page redraws only if something actually changed. The filters stay as set.
       const signature = (r) => [r.deliveries.length, r.usages.length, r.bagsIn, r.kgIn, r.bagsOut, r.kgOut, r.payable, r.deducted,
-        r.payRows.map((p) => `${p.count}:${p.value}`).join(), r.bayRows.map((b) => b.bags).join()].join('|');
+        r.payRows.map((p) => `${p.count}:${p.value}`).join(), r.bayRows.map((b) => b.bags).join(),
+        r.checkRows.map((c) => c.checks).join(), r.dryRows.map((x) => `${x.n}:${x.toKg}`).join()].join('|');
       let shown = signature(last);
       App._live = () => {
         if (!view.isConnected || document.querySelector('.modal-backdrop')) return;
@@ -1075,6 +1245,74 @@
       const auditRows = () => Store.all('audit').filter((a) => a && !Auth.isOwnerEmail(a.by))
         .slice().sort((a, b) => String(b.at || '').localeCompare(String(a.at || ''))).slice(0, 300);
 
+      /* Staff log (administrators): everything every person did, with
+         filters by person, area and time, and a summary per person. */
+      const AREA = { auth: 'Sign-in', delivery: 'Loads', payment: 'Payments', invoice: 'Invoices', bay: 'Bays', bag: 'Bag serials', bags: 'Bag store',
+        usage: 'Gasifier', supplier: 'Suppliers', quality: 'Quality', user: 'Staff', settings: 'Settings', subscription: 'Subscription', data: 'Data', report: 'Reports' };
+      const areaOf = (a) => String(a.action || '').split('.')[0];
+      const areaLabel = (k) => AREA[k] || (k ? k[0].toUpperCase() + k.slice(1) : 'Other');
+      const staffF = { who: '', area: '', days: '30', q: '', limit: 100 };
+      const staffAll = () => Store.all('audit').filter((a) => a && a.by && !Auth.isOwnerEmail(a.by));
+      const staffFiltered = () => {
+        const since = staffF.days === 'all' ? 0 : Date.now() - Number(staffF.days) * 864e5;
+        const q = staffF.q.trim().toLowerCase();
+        return staffAll().filter((a) => (!staffF.who || a.by === staffF.who) && (!staffF.area || areaOf(a) === staffF.area)
+          && (Date.parse(a.at) || 0) >= since
+          && (!q || `${a.action} ${a.detail} ${a.entityId} ${a.name}`.toLowerCase().includes(q)))
+          .sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
+      };
+      const staffResults = () => {
+        const rows = staffFiltered();
+        const people = new Map();
+        for (const a of rows) {
+          const p = people.get(a.by) || { by: a.by, name: a.name || '', role: a.role, n: 0, last: a.at, first: a.at, days: new Set(), devices: new Set(), areas: new Map() };
+          p.n++; if (a.at > p.last) p.last = a.at; if (a.at < p.first) p.first = a.at;
+          p.days.add(String(a.at).slice(0, 10)); if (a.device) p.devices.add(a.device);
+          const ar = areaOf(a); p.areas.set(ar, (p.areas.get(ar) || 0) + 1);
+          if (!p.name && a.name) p.name = a.name;
+          people.set(a.by, p);
+        }
+        const summary = Array.from(people.values()).sort((a, b) => b.n - a.n);
+        const byDay = new Map();
+        for (const a of rows) { const d = String(a.at).slice(0, 10); byDay.set(d, (byDay.get(d) || 0) + 1); }
+        const busiest = Array.from(byDay.entries()).sort((a, b) => b[1] - a[1])[0];
+        return `
+          <section class="stats stats-4">
+            ${UI.stat('Actions', rows.length.toLocaleString(), staffF.days === 'all' ? 'all time' : `last ${staffF.days} days`)}
+            ${UI.stat('People', `${summary.length}`, 'did something')}
+            ${UI.stat('Busiest day', busiest ? esc(dOnly(busiest[0])) : '—', busiest ? `${busiest[1]} actions` : '')}
+            ${UI.stat('Devices', `${new Set(rows.map((a) => a.device).filter(Boolean)).size}`, 'phones, tablets, computers')}
+          </section>
+          <section class="nm-card pad">
+            <div class="card-head"><h3>By person</h3></div>
+            ${UI.table({
+              rows: summary, empty: 'Nobody did anything in this period.',
+              columns: [
+                { label: 'Person', render: (p) => `<button class="link-btn" data-staff-who="${esc(p.by)}">${esc(p.name || p.by)}</button><div class="muted small">${esc(p.name ? p.by : '')}${p.role ? ` · ${esc(D.ROLE_LABEL[p.role] || p.role)}` : ''}</div>` },
+                { label: 'Actions', cls: 'num', render: (p) => p.n.toLocaleString() },
+                { label: 'Days active', cls: 'num', render: (p) => `${p.days.size}` },
+                { label: 'Mostly', render: (p) => `<span class="small">${Array.from(p.areas.entries()).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, n]) => `${esc(areaLabel(k))} ${n}`).join(' · ')}</span>` },
+                { label: 'Devices', cls: 'num', render: (p) => `${p.devices.size}` },
+                { label: 'Last active', render: (p) => `<span class="small">${esc(dt(p.last))}</span>` },
+              ],
+            })}
+          </section>
+          <section class="nm-card pad">
+            <div class="card-head"><h3>Everything, newest first</h3><span class="muted small">${Math.min(rows.length, staffF.limit).toLocaleString()} of ${rows.length.toLocaleString()}</span></div>
+            ${UI.table({
+              rows: rows.slice(0, staffF.limit), empty: 'Nothing matches these filters.',
+              columns: [
+                { label: 'When', render: (a) => `<span class="small">${esc(dt(a.at))}</span>` },
+                { label: 'Who', render: (a) => `${esc(a.name || a.by)}<div class="muted small">${a.role ? esc(D.ROLE_LABEL[a.role] || a.role) : ''}</div>` },
+                { label: 'Area', render: (a) => badge(areaLabel(areaOf(a)), 'muted') },
+                { label: 'What', render: (a) => `<span class="small">${esc(a.detail || a.action)}</span><div class="muted small mono">${esc(a.action)}${a.entityId ? ` · ${esc(a.entityId)}` : ''}</div>` },
+                { label: 'Device', render: (a) => `<span class="muted small mono">${esc(String(a.device || '').slice(-6))}</span>` },
+              ],
+            })}
+            ${rows.length > staffF.limit ? '<div class="row-actions"><button class="nm-btn" id="staff-more">Show more</button></div>' : ''}
+          </section>`;
+      };
+
       // Each tab is gated by its own permission: a supervisor can read the
       // audit trail without being able to touch users or settings.
       const TAB_DEFS = [
@@ -1082,6 +1320,7 @@
         { id: 'sub', label: 'Subscription', ok: isSuper },
         { id: 'settings', label: 'Business settings', ok: Auth.can('settings.write') },
         { id: 'audit', label: 'Activity log', ok: Auth.can('audit.read') },
+        { id: 'staff', label: 'Staff log', ok: Auth.can('user.manage') },
         { id: 'data', label: 'Data &amp; sync', ok: Auth.can('user.manage') },
       ];
       const allowed = TAB_DEFS.filter((t) => t.ok);
@@ -1194,8 +1433,6 @@
             <p class="muted">These numbers drive every price the app calculates. Change them only against a signed agreement with the suppliers.</p>
             <div class="grid-3">
               ${UI.field('Full unit price (Rs/bag)', UI.input('unitPrice', { type: 'number', min: 0, step: '0.01', value: s.unitPrice }))}
-              ${UI.field('Reduced unit price (Rs/bag)', UI.input('reducedUnitPrice', { type: 'number', min: 0, step: '0.01', value: s.reducedUnitPrice }))}
-              ${UI.field('Fill agreement (%)', UI.input('fillThresholdPct', { type: 'number', min: 50, max: 100, value: s.fillThresholdPct }))}
               ${UI.field('Sample size (% of bags)', UI.input('sampleSizePct', { type: 'number', min: 1, max: 100, value: s.sampleSizePct }))}
               ${UI.field('Minimum sample bags', UI.input('minSampleSize', { type: 'number', min: 1, max: 50, value: s.minSampleSize }))}
               ${UI.field('Bag serial prefix', UI.input('bagSerialPrefix', { value: s.bagSerialPrefix }))}
@@ -1220,12 +1457,9 @@
             </div>
             <div class="grid-2">
               ${UI.field('Damp from (%)', UI.input('moistureWarnPct', { type: 'number', min: 1, max: 99, value: s.moistureWarnPct }), 'Shown in amber from this reading.')}
-              ${UI.field('Wet from (%)', UI.input('moistureHighPct', { type: 'number', min: 1, max: 99, value: D.moistureHighPct(s) }), 'Shown in red. The load is still received; the supervisor decides the deduction.')}
+              ${UI.field('Wet from (%)', UI.input('moistureHighPct', { type: 'number', min: 1, max: 99, value: D.moistureHighPct(s) }), 'Shown in blue on the bays. Used for drying, not for the price.')}
             </div>
-            <div class="grid-2">
-              ${UI.field('Suggested deduction, damp load (%)', UI.input('deductDampPct', { type: 'number', min: 0, max: 100, step: '0.5', value: s.deductDampPct ?? 5 }), 'Filled in when the supervisor accepts a damp load. They can change it.')}
-              ${UI.field('Suggested deduction, wet load (%)', UI.input('deductWetPct', { type: 'number', min: 0, max: 100, step: '0.5', value: s.deductWetPct ?? 10 }), 'Set both to 0 to turn suggestions off.')}
-            </div>
+            <p class="small muted">Wetness is shown for drying the bays. It never cuts the price: only bags not filled fully do.</p>
             <div id="cal-preview"></div>
             <div class="row-actions"><button class="nm-btn primary" id="save-settings">Save settings</button></div>
           </section>`,
@@ -1245,6 +1479,25 @@
               ],
             })}
           </section>`; },
+
+        staff: () => {
+          const people = new Map();
+          for (const a of staffAll()) if (!people.has(a.by)) people.set(a.by, a.name || a.by);
+          const areas = Array.from(new Set(staffAll().map(areaOf))).filter(Boolean).sort((a, b) => areaLabel(a).localeCompare(areaLabel(b)));
+          return `
+          <section class="nm-card pad">
+            <div class="card-head"><h3>Staff log</h3><span class="muted small" id="staff-count">Everything every staff member did, from every device${Sync.state.live ? ', updating live' : ''}</span></div>
+            <p class="muted small">For administrators. Pick a person, an area or a period. Nothing here can be edited.</p>
+            <div class="grid-4 staff-filters">
+              ${UI.field('Person', UI.select('staffWho', [{ value: '', label: 'Everyone' }].concat(Array.from(people.entries()).sort((a, b) => a[1].localeCompare(b[1])).map(([v, l]) => ({ value: v, label: l }))), { value: staffF.who }))}
+              ${UI.field('Area', UI.select('staffArea', [{ value: '', label: 'Everything' }].concat(areas.map((k) => ({ value: k, label: areaLabel(k) }))), { value: staffF.area }))}
+              ${UI.field('Period', UI.select('staffDays', [{ value: '1', label: 'Today' }, { value: '7', label: 'Last 7 days' }, { value: '30', label: 'Last 30 days' }, { value: '90', label: 'Last 90 days' }, { value: 'all', label: 'All time' }], { value: staffF.days }))}
+              ${UI.field('Search', UI.input('staffQ', { value: staffF.q, placeholder: 'Receipt no., bay, name…' }))}
+            </div>
+            <div class="row-actions"><button class="nm-btn" id="staff-csv"><i class="i i-download"></i>Download CSV</button></div>
+          </section>
+          <div id="staff-results">${staffResults()}</div>`;
+        },
 
         data: () => `
           <section class="cols-2">
@@ -1296,10 +1549,10 @@
         view.querySelector('#admin-body').innerHTML = tabs[tab]();
         wire(tab);
         // The log on screen is this device's copy; fetch what other devices recorded.
-        if (tab === 'audit' && !fromSync) {
+        if ((tab === 'audit' || tab === 'staff') && !fromSync) {
           Sync.pullAudit().then((res) => {
-            if (current !== 'audit' || !view.isConnected) return;
-            if (res && res.added) show('audit', true);
+            if (current !== tab || !view.isConnected) return;
+            if (res && res.added) { if (tab === 'staff' && view._staffRedraw) view._staffRedraw(); else show('audit', true); }
             else if (res && res.refused) {
               const c = view.querySelector('#audit-count');
               if (c) c.textContent = 'Showing this device only. Publish the latest firebase.rules.json to see every device.';
@@ -1310,6 +1563,28 @@
 
       const wire = (tab) => {
         const body = view.querySelector('#admin-body');
+
+        if (tab === 'staff') {
+          const redraw = () => { body.querySelector('#staff-results').innerHTML = staffResults(); wireStaffResults(); };
+          const wireStaffResults = () => {
+            const more = body.querySelector('#staff-more');
+            if (more) more.addEventListener('click', () => { staffF.limit += 200; redraw(); });
+            UI.$$('[data-staff-who]', body).forEach((b) => b.addEventListener('click', () => {
+              staffF.who = b.dataset.staffWho; staffF.limit = 100;
+              body.querySelector('[name=staffWho]').value = staffF.who; redraw();
+            }));
+          };
+          const bind = (name, key, ev) => body.querySelector(`[name=${name}]`).addEventListener(ev, (e) => { staffF[key] = e.target.value; staffF.limit = 100; redraw(); });
+          bind('staffWho', 'who', 'change'); bind('staffArea', 'area', 'change'); bind('staffDays', 'days', 'change');
+          body.querySelector('[name=staffQ]').addEventListener('input', UI.debounce((e) => { staffF.q = e.target.value; staffF.limit = 100; redraw(); }, 250));
+          body.querySelector('#staff-csv').addEventListener('click', () => {
+            const rows = staffFiltered().map((a) => ({ when: a.at, email: a.by, name: a.name || '', role: a.role || '', area: areaLabel(areaOf(a)), action: a.action, record: a.entityId || '', detail: a.detail || '', device: a.device || '' }));
+            if (!rows.length) return UI.toast('Nothing to download', 'warn');
+            UI.download(`staff-log-${new Date().toISOString().slice(0, 10)}.csv`, UI.toCSV(rows), 'text/csv');
+          });
+          wireStaffResults();
+          view._staffRedraw = redraw;
+        }
 
         if (tab === 'users') {
           const add = body.querySelector('#add-user');
@@ -1433,9 +1708,9 @@
         }
 
         if (tab === 'settings') {
-          const NUM_FIELDS = ['unitPrice', 'reducedUnitPrice', 'fillThresholdPct', 'sampleSizePct', 'minSampleSize',
+          const NUM_FIELDS = ['unitPrice', 'sampleSizePct', 'minSampleSize',
             'moistureCalKg1', 'moistureCalPct1', 'moistureCalKg2', 'moistureCalPct2',
-            'moistureWarnPct', 'moistureHighPct', 'deductDampPct', 'deductWetPct', 'maxBagsPerDelivery', 'bagReorderLevel'];
+            'moistureWarnPct', 'moistureHighPct', 'maxBagsPerDelivery', 'bagReorderLevel'];
           const readNums = () => {
             const out = {};
             for (const k of NUM_FIELDS) out[k] = Number((body.querySelector(`[name=${k}]`) || {}).value);
@@ -1485,12 +1760,10 @@
             if (NUM_FIELDS.some((k) => !Number.isFinite(patch[k]))) return UI.toast('Every number field needs a value', 'danger');
             if (patch.moistureCalKg1 === patch.moistureCalKg2) return UI.toast('The two moisture points need different bag weights', 'danger');
             if (patch.moistureWarnPct >= patch.moistureHighPct) return UI.toast('"Wet from" must be higher than "Damp from"', 'danger');
-            if ([patch.deductDampPct, patch.deductWetPct].some((v) => v < 0 || v > 100)) return UI.toast('Suggested deductions must be between 0 and 100%', 'danger');
-            if (patch.reducedUnitPrice > patch.unitPrice) return UI.toast('The reduced price cannot be above the full price', 'danger');
             patch.bagSerialPrefix = String(f.bagSerialPrefix || 'EFPL-BG').toUpperCase().replace(/[^A-Z0-9-]/g, '');
             patch.siteName = f.siteName; patch.siteLocation = f.siteLocation; patch.headOfficeEmail = f.headOfficeEmail;
             Store.patchSettings(patch);
-            VH.audit('settings.update', 'settings', 'singleton', `unit price ${patch.unitPrice}/${patch.reducedUnitPrice}, fill ${patch.fillThresholdPct}%, moisture line ${patch.moistureCalKg1}kg=${patch.moistureCalPct1}% to ${patch.moistureCalKg2}kg=${patch.moistureCalPct2}%`);
+            VH.audit('settings.update', 'settings', 'singleton', `full price ${patch.unitPrice} a bag at 100% fill, moisture line ${patch.moistureCalKg1}kg=${patch.moistureCalPct1}% to ${patch.moistureCalKg2}kg=${patch.moistureCalPct2}%`);
             UI.toast('Settings saved', 'ok');
           });
         }
@@ -1582,7 +1855,13 @@
         if (!view.isConnected || document.querySelector('.modal-backdrop')) return;
         const body = view.querySelector('#admin-body');
         const busy = body && body.contains(document.activeElement) && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
-        if (current === 'audit') {
+        if (current === 'staff') {
+          Sync.pullAudit().then(() => {
+            if (current !== 'staff' || !view.isConnected) return;
+            const n = Store.all('audit').length;
+            if (n !== lastAuditCount && view._staffRedraw) { lastAuditCount = n; const y = window.scrollY; view._staffRedraw(); window.scrollTo(0, y); }
+          });
+        } else if (current === 'audit') {
           Sync.pullAudit().then(() => {
             if (current !== 'audit' || !view.isConnected) return;
             const n = Store.all('audit').length;

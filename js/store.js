@@ -112,7 +112,7 @@
     }
     if (coll === 'bagIssues') list('serials');
     if (coll === 'payments') list('history');
-    if (coll === 'usageRequests' && rec.status === 'CONSUMED') { list('sampleBags'); list('bagSerials'); list('fromLoads'); }
+    if (coll === 'usageRequests' && rec.status === 'CONSUMED') { list('sampleBags'); list('bagSerials'); list('fromLoads'); list('typeWeights'); }
     return rec;
   }
 
@@ -217,13 +217,20 @@
      */
     migrateSettings() {
       const s = this.data.settings;
-      if (!s || (s.rev || 0) >= 3) return false;
-      if (!s.siteLocation || /gaththegama/i.test(s.siteLocation)) s.siteLocation = 'Balangoda';   // the site is in Balangoda
-      s.minSampleSize = 1;                    // the fill check measures the full 5 %, with no extra minimum
-      for (const k of ['dryingKgPerDay', 'driestBagKg', 'moistureReadyPct', 'bayCapacityBags', 'defaultDeductionReason']) {
-        if (s[k] === undefined || s[k] === null || s[k] === '') s[k] = CFG.defaults[k];
+      if (!s || (s.rev || 0) >= 4) return false;
+      if ((s.rev || 0) < 3) {
+        if (!s.siteLocation || /gaththegama/i.test(s.siteLocation)) s.siteLocation = 'Balangoda';   // the site is in Balangoda
+        s.minSampleSize = 1;                    // the fill check measures the full 5 %, with no extra minimum
+        for (const k of ['dryingKgPerDay', 'driestBagKg', 'moistureReadyPct', 'bayCapacityBags', 'defaultDeductionReason']) {
+          if (s[k] === undefined || s[k] === null || s[k] === '') s[k] = CFG.defaults[k];
+        }
       }
-      s.rev = 3;
+      // Loads here are not wet; money is taken off for bags not filled
+      // fully. The old moisture suggestions (5 % damp, 10 % wet) go off once;
+      // an administrator can switch them on again in Business settings.
+      s.deductDampPct = 0;
+      s.deductWetPct = 0;
+      s.rev = 4;
       return true;
     },
 

@@ -444,7 +444,7 @@
           </div>
           <ul class="auth-facts">
             <li><b>Rs ${esc(CFG.defaults.unitPrice)}</b>per full bag</li>
-            <li><b>${esc(CFG.defaults.fillThresholdPct)}%</b>fill agreement</li>
+            <li><b>100%</b>full bags for the full price</li>
             <li><b>Offline</b>works with no signal</li>
           </ul>
         </aside>

@@ -51,14 +51,18 @@
       + list(
         '<b>Red</b> bays are dry: use them first. Amber is still damp. Blue is wet. Grey is empty.',
         'Bags dry in the bay: about 0.6 kg less each day.',
+        '<b>Daily bay check</b>: each day, weigh one bag from each bay and type the weight. Missing a day is fine.',
+        'Each bay shows a small graph of its bag weight. Tap <b>Show more</b> for the full graph and every reading.',
         'Tap a bay to see what is in it, its history, or to change its size.',
+        'Every bay needs its own code and its own name: two bays cannot share a name.',
       ),
     gasifier:
       p('Taking biomass from the bays to the gasifier.')
       + list(
         'The bays are listed driest first.',
         'The operator taps <b>Ask for bags</b>. The supervisor approves and picks the bay.',
-        'Then the operator weighs 3 bags, feeds the gasifier, and counts the empty bags (good or torn).',
+        'Then the operator weighs one bag of each type (gliricidia, cinnamon…), types how many bags of each, feeds the gasifier, and counts the empty bags (good or torn).',
+        'The weight is one bag × the number of bags, for each type.',
       ),
     bags:
       p('Bags with serial numbers (stickers). Only needed if you label your bags.')
@@ -71,7 +75,7 @@
       p('Find out where a bag came from.')
       + list('Type the number on the bag sticker.', 'You see the supplier, the truck, the bay, the gasifier and the payment.'),
     quality:
-      p('Problems with the biomass, such as stones, rot or very wet bags.')
+      p('Problems with the biomass, such as bags not full, stones or rot.')
       + list(
         'Tap <b>Report an issue</b>. Use the bag number, or pick the gasifier job if the bag has no number.',
         'The app finds the supplier, so they can be told.',
@@ -98,13 +102,16 @@
       + list('Search by name, code, phone or village.', 'Add a supplier with their bank details, so Head Office can pay them.', 'Tap a supplier to see their trucks and payments, and print a statement.'),
     reports:
       p('Numbers for any time you choose.')
-      + list('Pick the days at the top, and a supplier or type if you want.', 'See biomass in and out, money, and wetness (moisture).', 'Print it, or download it for Excel (CSV).'),
+      + list('Pick the days at the top, and a supplier or type if you want.', 'See biomass in and out, money, and wetness (moisture).',
+        'See how the bag weight goes down in each bay, by days in the bay, by type at the gasifier, by bag fill and month by month.',
+        'Everything updates by itself when new work comes in.', 'Print it, or download it for Excel (CSV).'),
     admin:
       p('For the administrator.')
       + list(
         '<b>Users & roles</b>: give new people a job, or remove someone.',
         '<b>Business settings</b>: prices, the fill check, moisture and other numbers.',
         '<b>Activity log</b>: who did what, and when.',
+        '<b>Staff log</b>: everything each staff member did. Pick a person, an area or a period, and download it.',
         '<b>Data & sync</b>: backups, and fixing a phone that shows different numbers.',
       ),
     training:
@@ -118,21 +125,25 @@
     [/^Delivery RC-/, p('Everything about one truck: supplier, weights, fill check, bays and payment.') + list('Print the receipt, the invoice or the bag labels here.', 'If it is waiting, the supervisor can accept it from here.')],
     [/^Accept RC-/, p('Put this truck\'s bags into the bays and make the payment.') + list(
       'Type how many bags go in each bay. Empty bays are filled in for you. The total must match.',
-      'Check the supplier\'s bank details.',
-      'To take money off for under-filled or wet bags, type a percent and a reason.',
+      'Check the supplier\'s bank details. Wrong? Press <b>Change bank details</b>.',
+      'No bank details yet? Type the bank, branch and account number here. The truck cannot be accepted without them.',
+      'The fill check result is shown. If the bags were not filled fully, you can take a percent off and say why.',
       'Press <b>Accept and create payment</b>.',
     )],
-    [/^Payment PAY-/, p('One payment to a supplier.') + list('See how it was worked out and where to pay it.', 'Press the button for your step: approve, send to Head Office, or mark paid.', 'Print the payment slip for Head Office.')],
+    [/^Payment PAY-/, p('One payment to a supplier.') + list('See how it was worked out and where to pay it.', 'Bank details wrong or missing? Press <b>Change bank details</b>, then <b>Save bank details</b>.', 'Press the button for your step: approve, send to Head Office, or mark paid. This needs the bank details.', 'Print the payment slip for Head Office.')],
     [/^Amount taken off /, p('Change how much is taken off this payment, and why.') + list('Type the percent and the reason. The supplier sees the reason on the slip.')],
     [/^Edit BAY-|^Add a bay$/, p('Name a bay and set its size.') + list('The size is a guide. A bay can hold more if needed.', 'Only an empty bay can be removed.')],
     [/^Edit |^Add a supplier$/, p('A supplier\'s details.') + list('Name and phone are needed.', 'Add the bank, branch and account number, so Head Office can pay them.')],
     [/^SUP-\d+ · /, p('One supplier: contact, bank, trucks and payments.') + list('<b>Edit supplier</b> to change details.', '<b>Statement</b> prints everything for them.')],
     [/^BAY-\S+ history$/, p('Everything that went into and out of this bay.') + list('Each line shows the bags, the bag weight and how wet it was.', 'You can print this list.')],
-    [/^BAY-/, p('One bay, as it is today.') + list('How many bags, how dry, and which trucks they came from.', 'Weigh one bag from the bay to update the dryness.', '<b>History</b> shows everything in and out.')],
+    [/^BAY-/, p('One bay, as it is today.') + list('How many bags, how dry, and which trucks they came from.', 'Daily check: weigh one bag from the bay to update the dryness.', '<b>Show more</b> shows the weight graph. <b>History</b> shows everything in and out.')],
+    [/^Daily bay check$/, p('Weigh one bag from each bay.') + list('Type the weight for each bay you weighed.', 'Leave a bay blank if you did not weigh it today. That is fine.')],
+    [/weight and moisture$/, p('How this bay\'s bags got lighter over time.') + list('Each dot is a real weighing: a load coming in, a daily check, a test bag or the gasifier.', 'The red dashed line is dry enough to use.')],
     [/^Request biomass/, p('Ask for bags for the gasifier.') + list('Pick the bay and how many bags.', 'The supervisor approves it.')],
     [/^Approve USE-/, p('Approve a request for the gasifier.') + list('Pick the bay. The driest is at the top.', 'You can weigh one bag to check the dryness.')],
     [/^Weigh and feed/, p('Feed the gasifier.') + list(
-      'Weigh 3 bags. The app works out the weight and the wetness.',
+      'For each type (gliricidia, cinnamon…), type the number of bags and weigh one bag.',
+      'The app works out the weight (one bag × the bags) and the wetness.',
       'Count the empty bags: good ones go back to the bag store, torn ones are thrown away.',
       'Something wrong with the biomass? Tick the box to report it.',
     )],

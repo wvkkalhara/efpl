@@ -52,12 +52,77 @@
         <tr><td>Bank</td><td>${esc(sup.bankName || '—')}${sup.bankBranch ? `, ${esc(sup.bankBranch)} branch` : ''}</td></tr>
       </table>`;
     },
+    /** Full enough to pay: a bank and an account number. */
+    bankReady(sup) { return !!(sup && ((sup.bankName && sup.bankAccount) || (!sup.bankName && !sup.bankAccount && sup.bank))); },
+    canEditBank() { return Auth.can('supplier.write') || Auth.can('delivery.accept') || Auth.can('payment.approve') || Auth.can('payment.release'); },
+    BANKS: ['Bank of Ceylon', 'People\'s Bank', 'Commercial Bank', 'Hatton National Bank', 'Sampath Bank', 'Seylan Bank', 'National Savings Bank', 'Nations Trust Bank', 'DFCC Bank', 'Regional Development Bank', 'Sanasa Development Bank'],
+    /**
+     * "Pay to" with a way to change it on the spot. When the supplier has no
+     * bank details the fields start open and must be filled in.
+     */
+    bankEditor(sup, opts) {
+      const o = opts || {};
+      const ready = VH.bankReady(sup);
+      const can = VH.canEditBank();
+      const v = (k) => esc(sup ? (sup[k] || (k === 'bankName' && !sup.bankAccount ? sup.bank || '' : '')) : '');
+      return `<div class="bank-edit" data-bank-edit>
+        <div class="bank-show" ${ready ? '' : 'hidden'}>${VH.bankHtml(sup)}
+          ${can ? '<button type="button" class="nm-btn small" data-bank-toggle>Change bank details</button>' : ''}</div>
+        ${!ready && !can ? '<p class="t-warn small">No bank details on file. Ask someone who can edit suppliers to add them.</p>' : ''}
+        <div class="bank-form" ${ready || !can ? 'hidden' : ''}>
+          ${ready ? '' : '<p class="t-warn small"><b>No bank details for this supplier.</b> Add them now so Head Office can pay.</p>'}
+          <div class="grid-2">
+            ${UI.field('Bank', `<input class="nm-input" name="payBankName" list="pay-bank-list" value="${v('bankName')}" placeholder="Bank of Ceylon">`)}
+            ${UI.field('Branch', `<input class="nm-input" name="payBankBranch" value="${v('bankBranch')}" placeholder="Balangoda">`)}
+            ${UI.field('Account number', `<input class="nm-input" name="payBankAccount" inputmode="numeric" value="${v('bankAccount')}" placeholder="0071234567">`)}
+            ${UI.field('Account name', `<input class="nm-input" name="payBankAccountName" value="${v('bankAccountName')}" placeholder="As printed on the passbook">`, 'Leave empty if it is the supplier name.')}
+          </div>
+          <div class="row-actions">
+            ${o.saveButton ? '<button type="button" class="nm-btn small primary" data-bank-save>Save bank details</button>' : ''}
+            ${ready ? '<button type="button" class="nm-btn small" data-bank-toggle>Keep the old details</button>' : ''}
+          </div>
+          <datalist id="pay-bank-list">${VH.BANKS.map((b) => `<option value="${esc(b)}"></option>`).join('')}</datalist>
+        </div>
+      </div>`;
+    },
+    /** Wire the toggle. Returns read(): null when unchanged, else the new details (or an error). */
+    wireBankEditor(root) {
+      const box = root.querySelector('[data-bank-edit]');
+      if (!box) return () => null;
+      const show = box.querySelector('.bank-show'), form = box.querySelector('.bank-form');
+      UI.$$('[data-bank-toggle]', box).forEach((b) => b.addEventListener('click', () => {
+        const opening = form.hidden;
+        form.hidden = !opening; show.hidden = opening;
+        if (opening) { const f = form.querySelector('[name=payBankAccount]'); if (f) f.focus(); }
+      }));
+      return () => {
+        if (form.hidden) return null;
+        const val = (n) => String((form.querySelector(`[name=${n}]`) || {}).value || '').trim().replace(/\s+/g, ' ');
+        const out = { bankName: val('payBankName'), bankBranch: val('payBankBranch'), bankAccount: val('payBankAccount').replace(/[\s-]/g, ''), bankAccountName: val('payBankAccountName') };
+        if (!out.bankName) out.error = 'Enter the bank';
+        else if (!out.bankAccount) out.error = 'Enter the account number';
+        else if (!/^[0-9A-Za-z]{4,24}$/.test(out.bankAccount)) out.error = 'The account number should be 4 to 24 letters or digits';
+        return out;
+      };
+    },
+    /** Save new bank details on the supplier, and say so in the activity log. */
+    saveBank(supplierId, b, why) {
+      const sup = Store.byId('suppliers', supplierId);
+      if (!sup || !b) return false;
+      const had = VH.hasBank(sup), before = VH.bankText(sup);
+      Store.update('suppliers', sup.id, {
+        bankName: b.bankName, bankBranch: b.bankBranch, bankAccount: b.bankAccount, bankAccountName: b.bankAccountName,
+        bank: [b.bankName, b.bankAccount].filter(Boolean).join(' · '),
+      }, 'supplier-bank');
+      VH.audit('supplier.bank', 'supplier', sup.id, `${sup.code || ''} ${sup.name}: bank details ${had ? `changed from "${before}" ` : 'added '}to "${VH.bankText(Store.byId('suppliers', sup.id))}"${why ? ` (${why})` : ''}`);
+      return true;
+    },
 
     /* ------------------------------ bays ------------------------------
        What is in a bay right now, and how dry it is today. Biomass dries
        as it waits (Domain.driedBagKg), so the figure moves every day
        without anyone weighing anything. A real weighing of the bay (a
-       test bag at approval, the three bags at the gasifier) replaces the
+       test bag at approval, the daily bay check, one bag per type at the gasifier) replaces the
        estimate from that moment on. */
     /**
      * What is in a bay, load by load. The bay holds what was put into it when
@@ -128,6 +193,107 @@
       };
     },
 
+    /* ------------------------- daily bay check -------------------------
+       Someone weighs one bag from each bay, most days (a missed day is
+       fine). Each reading is kept as a store record (kind BAY_CHECK) and is
+       also the bay's latest weighing, so today's estimate starts from it. */
+    bayChecks(bayId) {
+      return Store.all('bagReturns')
+        .filter((r) => !r.deleted && r.kind === 'BAY_CHECK' && (!bayId || r.bayId === bayId))
+        .sort((a, b) => String(a.at || '').localeCompare(String(b.at || '')));
+    },
+    canBayCheck() { return Auth.can('usage.approve') || Auth.can('usage.consume') || Auth.can('bay.allocate'); },
+    checkedToday(bayId) {
+      const today = new Date().toDateString();
+      return VH.bayChecks(bayId).some((r) => new Date(r.at).toDateString() === today);
+    },
+    saveBayCheck(bayId, kgValue, note) {
+      const bay = Store.byId('bays', bayId);
+      const w = Number(kgValue);
+      if (!bay || !(w > 0)) return null;
+      const s = Store.settings();
+      const now = new Date().toISOString();
+      const me = (Auth.current() || {}).email || '';
+      const rec = Store.add('bagReturns', {
+        kind: 'BAY_CHECK', bayId, bayCode: bay.code, kg: w, moisturePct: D.moistureFromWeight(w, s),
+        bags: VH.bagsInBay(bayId), note: note || '', at: now, returnedAt: now, recordedBy: me,
+      }, 'bay-check');
+      Store.update('bays', bayId, { lastWeighKg: w, lastWeighAt: now, lastWeighBy: me }, 'bay-weigh');
+      VH.audit('bay.check', 'bay', bay.code, `${bay.code} daily check: one bag ${w} kg · moisture ${D.moistureFromWeight(w, s)}%`);
+      return rec;
+    },
+
+    /**
+     * Every weight known for a bay, oldest first: loads coming in, daily
+     * checks, test bags at approval and the bags weighed at the gasifier.
+     * This is how the weight (and so the moisture) goes down over time.
+     */
+    bayReadings(bayId) {
+      const s = Store.settings();
+      const out = [];
+      const add = (at, kgv, kind, label) => { const k = Number(kgv); if (at && k > 0) out.push({ at, kg: k, moisture: D.moistureFromWeight(k, s), kind, label }); };
+      for (const d of Store.all('deliveries')) {
+        if (d.deleted || d.status !== 'ACCEPTED') continue;
+        if ((d.allocations || []).some((a) => a.bayId === bayId)) add(d.acceptedAt || d.deliveredAt, d.avgBagKg, 'in', `${d.receiptNo} came in`);
+      }
+      for (const c of VH.bayChecks(bayId)) add(c.at, c.kg, 'check', 'Daily check');
+      for (const u of Store.all('usageRequests')) {
+        if (u.deleted || u.bayId !== bayId) continue;
+        if (u.testBagKg && u.approvedAt) add(u.approvedAt, u.testBagKg, 'test', `${u.requestNo} test bag`);
+        if (u.status === 'CONSUMED') add(u.consumedAt, u.avgBagKg, 'out', `${u.requestNo} to the gasifier`);
+      }
+      return out.sort((a, b) => String(a.at).localeCompare(String(b.at)));
+    },
+
+    /** A small line of the moisture over the last days (for a bay tile). */
+    sparkline(points, opts) {
+      const o = Object.assign({ w: 120, h: 30, days: 14 }, opts || {});
+      const since = Date.now() - o.days * 864e5;
+      const pts = (points || []).filter((p) => Date.parse(p.at) >= since && p.moisture !== null);
+      if (pts.length < 2) return `<span class="spark-empty">${pts.length ? `1 reading: ${pts[0].moisture}%` : 'no readings yet'}</span>`;
+      const xs = pts.map((p) => Date.parse(p.at));
+      const ys = pts.map((p) => p.moisture);
+      const x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs);
+      const y0 = Math.min.apply(null, ys) - 2, y1 = Math.max.apply(null, ys) + 2;
+      const X = (v) => (x1 === x0 ? o.w / 2 : 2 + ((v - x0) / (x1 - x0)) * (o.w - 4));
+      const Y = (v) => (y1 === y0 ? o.h / 2 : o.h - 3 - ((v - y0) / (y1 - y0)) * (o.h - 6));
+      const d = pts.map((p, i) => `${i ? 'L' : 'M'}${X(xs[i]).toFixed(1)} ${Y(p.moisture).toFixed(1)}`).join(' ');
+      const last = pts[pts.length - 1];
+      const first = pts[0];
+      const down = last.moisture < first.moisture;
+      return `<svg class="spark ${down ? 'is-down' : 'is-up'}" viewBox="0 0 ${o.w} ${o.h}" width="${o.w}" height="${o.h}" role="img" aria-label="Moisture from ${first.moisture}% to ${last.moisture}% over ${pts.length} readings">
+        <path d="${d}" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="${X(xs[xs.length - 1]).toFixed(1)}" cy="${Y(last.moisture).toFixed(1)}" r="2.6"/></svg>`;
+    },
+
+    /** A bigger chart of the moisture readings, with the dry line marked. */
+    bayChart(points, opts) {
+      const o = Object.assign({ w: 640, h: 200 }, opts || {});
+      const s = Store.settings();
+      const pts = (points || []).filter((p) => p.moisture !== null);
+      if (!pts.length) return '<p class="muted">No weights recorded for this bay yet.</p>';
+      const pad = { l: 34, r: 10, t: 10, b: 24 };
+      const xs = pts.map((p) => Date.parse(p.at));
+      const ready = D.moistureReadyPct(s);
+      const ys = pts.map((p) => p.moisture).concat([ready]);
+      const x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs);
+      const y0 = Math.max(0, Math.floor((Math.min.apply(null, ys) - 3) / 5) * 5), y1 = Math.ceil((Math.max.apply(null, ys) + 3) / 5) * 5;
+      const X = (v) => pad.l + (x1 === x0 ? (o.w - pad.l - pad.r) / 2 : ((v - x0) / (x1 - x0)) * (o.w - pad.l - pad.r));
+      const Y = (v) => o.h - pad.b - ((v - y0) / (y1 - y0 || 1)) * (o.h - pad.t - pad.b);
+      const line = pts.map((p, i) => `${i ? 'L' : 'M'}${X(xs[i]).toFixed(1)} ${Y(p.moisture).toFixed(1)}`).join(' ');
+      const ticks = [y0, Math.round((y0 + y1) / 2), y1];
+      const KIND = { in: 'came in', check: 'daily check', test: 'test bag', out: 'to the gasifier' };
+      return `<svg class="bay-chart" viewBox="0 0 ${o.w} ${o.h}" role="img" aria-label="Moisture of the bay over time">
+        ${ticks.map((t) => `<line class="grid" x1="${pad.l}" x2="${o.w - pad.r}" y1="${Y(t).toFixed(1)}" y2="${Y(t).toFixed(1)}"/><text class="ax" x="${pad.l - 6}" y="${(Y(t) + 4).toFixed(1)}" text-anchor="end">${t}%</text>`).join('')}
+        <line class="dry-line" x1="${pad.l}" x2="${o.w - pad.r}" y1="${Y(ready).toFixed(1)}" y2="${Y(ready).toFixed(1)}"/>
+        <text class="ax dry" x="${o.w - pad.r}" y="${(Y(ready) - 4).toFixed(1)}" text-anchor="end">dry: ${ready}%</text>
+        <path class="ln" d="${line}"/>
+        ${pts.map((p, i) => `<circle class="pt pt-${p.kind}" cx="${X(xs[i]).toFixed(1)}" cy="${Y(p.moisture).toFixed(1)}" r="4"><title>${dOnly(p.at)}: ${p.kg} kg, ${p.moisture}% (${KIND[p.kind] || p.kind})</title></circle>`).join('')}
+        <text class="ax" x="${pad.l}" y="${o.h - 6}">${dOnly(new Date(x0).toISOString())}</text>
+        <text class="ax" x="${o.w - pad.r}" y="${o.h - 6}" text-anchor="end">${dOnly(new Date(x1).toISOString())}</text>
+      </svg>`;
+    },
+
     /** Everything that went into and came out of a bay, newest first, with the moisture each time. */
     bayHistory(bayId) {
       const s = Store.settings();
@@ -151,6 +317,9 @@
         if (u.status === 'CONSUMED') {
           rows.push({ at: u.consumedAt, kind: 'out', bags: u.bags, kgPerBag: u.avgBagKg || null, moisture: u.avgBagKg ? D.moistureFromWeight(u.avgBagKg, s) : null, ref: u.requestNo, who: u.consumedBy || '', note: u.totalKg ? `${D.kg(u.totalKg)} to the gasifier` : 'To the gasifier' });
         }
+      }
+      for (const c of VH.bayChecks(bayId)) {
+        rows.push({ at: c.at, kind: 'weigh', bags: null, kgPerBag: c.kg, moisture: D.moistureFromWeight(c.kg, s), ref: 'Daily check', who: c.recordedBy || '', note: c.note || 'One bag weighed' });
       }
       return rows.sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
     },
@@ -185,6 +354,8 @@
           if (r.shelf === 'NEW') fresh -= q; else used -= q;
           discarded += q; if (recent(at)) discarded30 += q;
           moves.push({ at, kind: 'DISCARD', what: 'Thrown away', newD: r.shelf === 'NEW' ? -q : 0, usedD: r.shelf === 'NEW' ? 0 : -q, ref: r.returnNo, note: r.reason || r.note || '', by });
+        } else if (r.kind === 'BAY_CHECK') {
+          // daily bay checks are kept in the same list; they do not move bags
         } else if (r.kind === 'COUNT') {
           fresh += n(r.newDelta); used += n(r.usedDelta);
           moves.push({ at, kind: 'COUNT', what: 'Store counted', newD: n(r.newDelta), usedD: n(r.usedDelta), ref: r.returnNo, note: `Counted ${n(r.newCounted).toLocaleString()} new and ${n(r.usedCounted).toLocaleString()} used${r.note ? ` · ${r.note}` : ''}`, by });
@@ -636,7 +807,7 @@
 
           <section class="nm-card pad">
             <div class="step-head"><span class="step-no">3</span><div><h3>Random fill check</h3>
-              <p class="muted small">Empty ${s.sampleSizePct} bags in every 100 into the drum and type how full each one was (%). Type them all. Full price if the average is ${s.fillThresholdPct}% or more.</p></div></div>
+              <p class="muted small">Empty ${s.sampleSizePct} bags in every 100 into the drum and type how full each one was (%). Type them all. Full price only if the bags are 100% full; below that the price follows the fill.</p></div></div>
             <div class="row-actions" style="margin:0 0 14px">
               <button type="button" class="nm-btn" id="print-fill-sheet"><i class="i i-printer"></i>Print a blank sheet to fill in by hand</button>
               <span class="muted small">Write the readings on paper at the drum, then type them in here.</span>
@@ -652,7 +823,7 @@
               ], { value: 'AUTO' }))}
               ${UI.field('Note', UI.input('fillNote', { placeholder: 'Needed only when paying the full price anyway' }))}
             </div>
-            <p class="muted small">No truck is sent away. If the supplier fills the bags more, count and check them again. For wet or poor loads, the supervisor takes a percent off when accepting.</p>
+            <p class="muted small">No truck is sent away. If the supplier fills the bags more, count and check them again. If the bags are not filled fully, the supervisor can take a percent off when accepting.</p>
           </section>
 
           <section class="nm-card pad">
@@ -734,12 +905,12 @@
         const outcome = form.querySelector('[name=outcome]').value;
         const r = D.evaluateFillCheck({ bagCount: count, fills: valid, settings: s2, outcome: outcome === 'AUTO' ? null : outcome });
         const box = form.querySelector('#fill-result');
-        const tone = r.decision === 'NOT_CHECKED' ? 'muted' : r.decision === 'PASS' || r.decision === 'PASS_MARGINAL' ? 'ok' : 'warn';
+        const tone = r.decision === 'NOT_CHECKED' ? 'muted' : r.decision === 'PASS' || r.decision === 'OVERRIDDEN' ? 'ok' : 'warn';
         box.innerHTML = `
           <div class="fill-big ${tone}">${r.avgFillPct === null ? '—' : `${r.avgFillPct}%`}</div>
           <div class="muted small">average fill of ${valid.length} sample bag(s)</div>
           <div class="fill-table">
-            <div><span>Price per bag</span><b>${money(r.unitPrice)}</b></div>
+            <div><span>Price per bag</span><b>${money(r.payPerBag)}</b></div>
             <div><span>Full price</span><b>${money(r.fullPrice)}</b></div>
             <div><span>Value of this load</span><b>${money(r.amount)}</b></div>
             <div><span>Lowest to highest</span><b>${r.spread === null ? '—' : `${r.spread.toFixed(1)}%`}</b></div>
@@ -843,8 +1014,7 @@
         const w = D.weighTruck(data.grossKg, data.tareKg);
         if (!w.ok) errors.push({ field: 'Weight', msg: w.msg });
         if (!data.bagCount || data.bagCount < 1) errors.push({ field: 'Bags', msg: 'Enter the number of bags counted' });
-        if (data.bagCount > Store.settings().maxBagsPerDelivery) errors.push({ field: 'Bags', msg: `More than ${Store.settings().maxBagsPerDelivery} bags — split the delivery` });
-        if (data.outcome === 'OVERRIDE_FULL_PRICE' && !data.fillNote) errors.push({ field: 'Reason', msg: 'A written reason is required to override the price' });
+        if (data.bagCount > Store.settings().maxBagsPerDelivery) errors.push({ field: 'Bags', msg: `More than ${Store.settings().maxBagsPerDelivery} bags — split the delivery` });        if (data.outcome === 'OVERRIDE_FULL_PRICE' && !data.fillNote) errors.push({ field: 'Reason', msg: 'A written reason is required to override the price' });
         if (data.bagCount >= 1 && fillsMissing() > 0) errors.push({ field: 'Fill check', msg: `Enter the fill height for every sample bag: ${fillsMissing()} still missing` });
         UI.showErrors(form, errors);
         if (errors.length) {
@@ -1026,8 +1196,8 @@
   function fillBadge(r) {
     const f = r.fillCheck;
     if (!f || f.avgFillPct === null || f.avgFillPct === undefined) return '<span class="muted">not checked</span>';
-    const tone = f.decision === 'PASS' || f.decision === 'PASS_MARGINAL' ? 'ok' : 'warn';
-    const word = { PASS: 'full price', PASS_MARGINAL: 'full price', REDUCED_PRICE: 'reduced price', OVERRIDDEN: 'full price, by decision' }[f.decision] || 'reduced price';
+    const tone = f.decision === 'PASS' || f.decision === 'PASS_MARGINAL' || f.decision === 'OVERRIDDEN' ? 'ok' : 'warn';
+    const word = f.decision === 'SHORT' ? `${f.cutPct}% off` : ({ PASS: 'full price', PASS_MARGINAL: 'full price', REDUCED_PRICE: 'lower price (old rule)', OVERRIDDEN: 'full price, by decision' }[f.decision] || 'lower price');
     return `${badge(`${f.avgFillPct}%`, tone)}<div class="muted small">${esc(word)}</div>`;
   }
 
@@ -1062,7 +1232,7 @@
             ${d.fillCheck && d.fillCheck.avgFillPct !== null ? `
               <p><b class="big">${d.fillCheck.avgFillPct}%</b> average of ${d.fillCheck.fills.length} sample bags<br/>
               <span class="muted">${esc((d.fillCheck.fills || []).join(' · '))}</span></p>
-              <p>Unit price <b>${money(d.fillCheck.unitPrice)}</b> per bag<br/>Batch value <b>${money(d.fillCheck.amount)}</b></p>` : '<p class="muted">Not checked.</p>'}
+              <p>Price per bag <b>${money(D.fillPayPerBag(d.fillCheck))}</b>${d.fillCheck.cutPct ? ` (${d.fillCheck.cutPct}% off for bags not full)` : ''}<br/>Value of the load <b>${money(d.fillCheck.amount)}</b></p>` : '<p class="muted">Not checked.</p>'}
             ${d.deductionPct ? `<p class="t-danger">Deducted <b>${d.deductionPct}%</b> (${money(d.deductionAmount)})<br/><span class="muted">${esc(d.deductionReason || '')}</span></p>
               <p>Payable <b>${money(VH.payable(d))}</b></p>` : ''}
           </div>
@@ -1107,14 +1277,27 @@
     const s = Store.settings();
     const bays = Store.where('bays', (b) => !b.deleted);
     const prefix = s.bagSerialPrefix;
-    const unitPrice = d.fillCheck ? d.fillCheck.unitPrice : s.unitPrice;
-    const moisture = d.avgBagKg ? D.moistureFromWeight(d.avgBagKg, s) : null;
-    const suggest = D.suggestedDeduction(moisture, s);
     const sup0 = Store.byId('suppliers', d.supplierId) || {};
-    // The usual reason for taking something off is under-filled bags, so that
-    // is what the reason box always starts with. A damp or wet reading is
-    // shown under the percentage; the supervisor changes the reason if needed.
-    const defaultReason = s.defaultDeductionReason || 'Bags are not filled fully';
+    // Money is taken off only for bags not filled to capacity (never for
+    // moisture). The fill check works out the percent: 100 % full is the full
+    // price; 92 % full means 8 % off. It is filled in here, once, and the
+    // supervisor can change it.
+    const fc = d.fillCheck || {};
+    const newRule = fc.cutPct !== undefined && fc.cutPct !== null;
+    // checks made before the 100 % rule already carry their lower price
+    const unitPrice = newRule ? (Number(fc.fullPrice) || s.unitPrice) : (Number(fc.unitPrice) || s.unitPrice);
+    const fillAvg = Number.isFinite(Number(fc.avgFillPct)) && fc.avgFillPct !== null ? Number(fc.avgFillPct) : null;
+    const suggestPct = newRule ? Number(fc.cutPct) || 0 : 0;
+    const defaultReason = suggestPct && fillAvg !== null
+      ? `Bags not filled fully: ${fillAvg}% full on average`
+      : (s.defaultDeductionReason || 'Bags are not filled fully');
+    const fillNote = fillAvg === null
+      ? 'No fill check was recorded for this truck.'
+      : `Fill check: <b>${fillAvg}%</b> full on average${(fc.fills || []).length ? ` (${fc.fills.length} bags checked)` : ''}. ${fc.decision === 'OVERRIDDEN'
+        ? 'The full price is paid anyway, by decision.'
+        : fillAvg >= D.FULL_FROM_PCT ? 'The bags are full: full price.'
+          : newRule ? `Bags must be 100% full, so <b>${suggestPct}%</b> is filled in below.`
+            : `This truck was checked under the old rule and is already paid at ${money(unitPrice)} a bag.`}`;
 
     // Start with a sensible split: empty bays first, then wherever there is room.
     const holds = new Map(bays.map((b) => [b.id, VH.bagsInBay(b.id)]));
@@ -1144,15 +1327,14 @@
         </div>
         <p class="alloc-total">Total <b id="alloc-total">${d.bagCount}</b> of ${d.bagCount} <span id="alloc-hint" class="muted"></span></p>
         <h4>Pay to</h4>
-        ${VH.bankHtml(sup0)}
-        <h4>Take money off</h4>
-        <p class="muted small">Every truck is accepted. If this load is wet or the bags are not full, take a percent off the price here.</p>
-        ${d.avgBagKg ? VH.moistureScale(d.avgBagKg, { compact: true }) : ''}
+        ${VH.bankEditor(sup0)}
+        <h4>Bags not full: take money off</h4>
+        <p class="muted small">Every truck is accepted. The bags must be 100% full for the full price; what is missing is taken off. Wetness is shown but never cuts the price.</p>
+        <div class="fill-note ${fillAvg !== null && fillAvg < D.FULL_FROM_PCT && fc.decision !== 'OVERRIDDEN' ? 'is-low' : ''}">${fillNote}</div>
         <div class="grid-2" style="margin-top:12px">
-          ${UI.field('Take off (%)', UI.input('deductionPct', { type: 'number', min: 0, max: 100, step: '0.5', value: suggest.pct }),
-            suggest.pct ? `Suggested ${suggest.pct}% because the load reads ${esc(D.MOISTURE_LABEL[suggest.band])}. Change it, or set 0 for no deduction.` : 'No deduction suggested: the load reads dry enough.')}
-          ${UI.field('Why', UI.input('deductionReason', { value: defaultReason, placeholder: 'Bags are not filled fully' }),
-            suggest.reason ? `Only used when the percentage is above 0. Write "${esc(suggest.reason)}" instead if the deduction is for moisture.` : 'Only used when the percentage is above 0.')}
+          ${UI.field('Take off (%)', UI.input('deductionPct', { type: 'number', min: 0, max: 100, step: '0.1', value: suggestPct }),
+            suggestPct ? `From the fill check: ${fillAvg}% full means ${suggestPct}% off. You can change it.` : '0 = nothing taken off.')}
+          ${UI.field('Why', UI.input('deductionReason', { value: defaultReason, placeholder: 'Bags are not filled fully' }), 'Only used when the percent is above 0.')}
         </div>
         <div class="calc-strip" id="deduct-out"></div>
         <div class="grid-2" style="margin-top:12px">
@@ -1182,6 +1364,7 @@
         };
         UI.$$('[data-bay]', el).forEach((i) => i.addEventListener('input', recalc));
         recalc();
+        const readBank = VH.wireBankEditor(el);
 
         const pctEl = el.querySelector('[name=deductionPct]');
         const money$ = () => D.applyDeduction(d.bagCount, unitPrice, pctEl.value);
@@ -1216,8 +1399,14 @@
           const serials = VH.parseSerials(el.querySelector('[name=serials]').value, prefix);
           if (serials.length > d.bagCount) errors.push({ field: 'Serials', msg: `${serials.length} serials entered but only ${d.bagCount} bags were counted` });
 
+          // Pay to: new or changed bank details are saved on the supplier; none at all stops the payment.
+          const bank = readBank();
+          if (bank && bank.error) errors.push({ field: 'Pay to', msg: bank.error });
+          if (!bank && !VH.bankReady(Store.byId('suppliers', d.supplierId))) errors.push({ field: 'Pay to', msg: 'Add the supplier\'s bank details before the payment is made' });
+
           UI.showErrors(el.querySelector('#accept-errors').parentNode, errors);
           if (errors.length) { el.querySelector('.modal-body').scrollTop = 0; return; }
+          if (bank) VH.saveBank(d.supplierId, bank, `on accepting ${d.receiptNo}`);
 
           // Attach serials -> bag records
           const bySerial = new Map(Store.all('bags').map((b) => [b.serial, b]));
@@ -1305,7 +1494,7 @@
       <p class="meta">Empty each sample bag into the measuring drum and write the fill height as a percentage of the drum. ${count
         ? `Fill all ${sample} boxes: the app needs the whole ${esc(s.sampleSizePct)}% sample.`
         : `Fill one box for each sample bag: ${esc(s.sampleSizePct)}% of the bags, rounded up (for example 120 bags = 6 boxes). The app needs all of them.`}
-        Agreement: ${esc(s.fillThresholdPct)}% average for the full price of Rs ${esc(s.unitPrice)}; below that, Rs ${esc(s.reducedUnitPrice)} per bag. The app works out the average.</p>
+        Full price (Rs ${esc(s.unitPrice)} a bag) only when the bags are 100% full. Below that, the part that is missing is taken off. The app works out the average.</p>
       <div class="fill-sheet">${boxes}</div>
       <div style="display:flex;gap:20mm;margin-top:10mm">
         <div class="sign">Measured by</div><div class="sign">Supplier or driver</div><div class="sign">Biomass supervisor</div>
@@ -1339,9 +1528,9 @@
       <table>
         <thead><tr><th>Description</th><th class="num">Quantity</th><th class="num">Rate</th><th class="num">Amount</th></tr></thead>
         <tbody>
-          <tr><td>${esc(VH.typeLabel(d.biomassType))} biomass, ${kg(d.netKg)} net, vehicle ${esc(d.vehicleNo || '')}${d.fillCheck && d.fillCheck.avgFillPct !== null ? `<br/><span class="meta">Fill check ${d.fillCheck.avgFillPct}% average${full && unit < full ? `: reduced rate applied (full rate ${money(full)})` : ''}</span>` : ''}</td>
+          <tr><td>${esc(VH.typeLabel(d.biomassType))} biomass, ${kg(d.netKg)} net, vehicle ${esc(d.vehicleNo || '')}${d.fillCheck && d.fillCheck.avgFillPct !== null ? `<br/><span class="meta">Fill check: bags ${d.fillCheck.avgFillPct}% full on average${full && unit < full ? ` (old rule: lower rate, full rate ${money(full)})` : ''}</span>` : ''}</td>
             <td class="num">${(d.bagCount || 0).toLocaleString()} bags</td><td class="num">${money(unit)}</td><td class="num">${money(gross)}</td></tr>
-          ${deducted ? `<tr><td>Deduction ${esc(d.deductionPct)}%${d.deductionReason ? `: ${esc(d.deductionReason)}` : ''}</td><td class="num"></td><td class="num"></td><td class="num">− ${money(deducted)}</td></tr>` : ''}
+          ${deducted ? `<tr><td>Taken off ${esc(d.deductionPct)}%${d.deductionReason ? `: ${esc(d.deductionReason)}` : ''}</td><td class="num"></td><td class="num"></td><td class="num">− ${money(deducted)}</td></tr>` : ''}
           <tr><th colspan="3">Amount payable</th><th class="num">${money(payable)}</th></tr>
         </tbody>
       </table>
@@ -1373,10 +1562,10 @@
         <tr><th>Gross</th><td>${kg(d.grossKg)}</td><th>Tare</th><td>${kg(d.tareKg)}</td></tr>
         <tr><th>Net weight</th><td>${kg(d.netKg)}</td><th>Average per bag</th><td>${d.avgBagKg || '—'} kg</td></tr>
         <tr><th>Fill check average</th><td>${d.fillCheck && d.fillCheck.avgFillPct !== null ? d.fillCheck.avgFillPct + '%' : 'not checked'}</td>
-          <th>Unit price</th><td>${money((d.fillCheck && d.fillCheck.unitPrice) || Store.settings().unitPrice)}</td></tr>
+          <th>Price per bag (by fill)</th><td>${money(D.fillPayPerBag(d.fillCheck, Store.settings().unitPrice))}</td></tr>
         <tr><th>Moisture (from bag weight)</th><td>${d.avgBagKg ? D.moistureFromWeight(d.avgBagKg, Store.settings()) + '%' : '—'}</td>
-          <th>Batch value</th><td>${money((d.fillCheck && d.fillCheck.amount) || 0)}</td></tr>
-        ${d.deductionPct ? `<tr><th>Deduction</th><td>${d.deductionPct}% · ${money(d.deductionAmount)}</td><th>Reason</th><td>${esc(d.deductionReason || '')}</td></tr>` : ''}
+          <th>Value of the load</th><td>${money((d.fillCheck && d.fillCheck.amount) || 0)}</td></tr>
+        ${d.deductionPct ? `<tr><th>Taken off</th><td>${d.deductionPct}% · ${money(d.deductionAmount)}</td><th>Why</th><td>${esc(d.deductionReason || '')}</td></tr>` : ''}
         <tr><th>Payable</th><td colspan="3"><b>${d.status === 'ACCEPTED' ? money(VH.payable(d)) : 'Set when the supervisor accepts the load'}</b></td></tr>
         ${(d.allocations || []).length ? `<tr><th>Bays</th><td colspan="3">${d.allocations.map((a) => `${esc(a.bayCode)}: ${a.bags} bags`).join(' · ')}</td></tr>` : ''}
         <tr><th>Pay to</th><td colspan="3">${esc(VH.bankText(sup))}</td></tr>

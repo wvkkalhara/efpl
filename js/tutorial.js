@@ -140,10 +140,10 @@
         { title: 'Find the supplier', route: 'intake', before: () => revealIntake(0), target: '.supplier-pick', text: () => `Search by name, code, phone or village. ${can('supplier.write') ? 'First visit? <b>New supplier</b> adds them here, with their bank details so Head Office can pay them.' : ''}` },
         { title: 'Vehicle and driver', route: 'intake', before: () => revealIntake(0), target: '#intake-form .grid-3', text: 'Choose the biomass type and enter the vehicle number, the driver and the weighbridge slip.' },
         { title: 'Weighbridge', route: 'intake', before: () => revealIntake(1), target: () => document.querySelector('#intake-form section:not([hidden]) .grid-4'), text: 'Type the <b>gross</b> and <b>tare</b> weights and the <b>bags counted</b>. The app works out the net weight and the average bag weight.' },
-        { title: 'Moisture from the bag weight', route: 'intake', before: () => revealIntake(1), target: '#weigh-out', text: () => `The average bag weight tells the moisture: an ${Store.settings().moistureCalKg1 || 18} kg bag is ${Store.settings().moistureCalPct1 || 20} %, a ${Store.settings().moistureCalKg2 || 36} kg bag is ${Store.settings().moistureCalPct2 || 60} %. Nothing is turned away: a wet load is received and a percentage is deducted.` },
+        { title: 'Moisture from the bag weight', route: 'intake', before: () => revealIntake(1), target: '#weigh-out', text: () => `The average bag weight tells the moisture: an ${Store.settings().moistureCalKg1 || 18} kg bag is ${Store.settings().moistureCalPct1 || 20} %, a ${Store.settings().moistureCalKg2 || 36} kg bag is ${Store.settings().moistureCalPct2 || 60} %. This is used to plan the drying in the bays.` },
         { title: 'Print the blank fill sheet', route: 'intake', before: () => revealIntake(2), target: '#print-fill-sheet', text: 'Print a sheet with one box per sample bag and write the readings at the drum. What you have typed so far is kept safe while you print, even if the phone reloads the page.' },
         { title: 'The full 5 % sample', route: 'intake', before: () => revealIntake(2), target: '#fill-inputs', text: () => `Empty each sample bag into the drum and type the fill height. <b>Every</b> bag in the ${Store.settings().sampleSizePct || 5} % sample must be entered: 120 bags means 6 readings.` },
-        { title: 'The price follows the fill', route: 'intake', before: () => revealIntake(2), target: '#fill-result', text: () => `At ${Store.settings().fillThresholdPct || 90} % average or more the supplier gets <b>Rs ${Store.settings().unitPrice || 300}</b> a bag; below that <b>Rs ${Store.settings().reducedUnitPrice || 270}</b>. The supervisor can pay full price anyway, with a written reason.` },
+        { title: 'The price follows the fill', route: 'intake', before: () => revealIntake(2), target: '#fill-result', text: () => `Bags must be <b>100% full</b> for the full price, <b>Rs ${Store.settings().unitPrice || 300}</b> a bag (never more). Below that the price follows the fill: 92% full means 8% off. Wetness never cuts the price. The supervisor can pay full price anyway, with a written reason.` },
         { title: 'Bag serials', route: 'intake', before: () => revealIntake(3), target: fieldOf('[name=serialsText]'), text: 'Scan or paste the bag numbers. A whole range works, like EFPL-BG-000301-000480. You can also leave this for acceptance.' },
         { title: 'Register', route: 'intake', before: () => revealIntake(3), target: '#step-submit', text: () => (can('delivery.accept')
           ? '<b>Register delivery</b> saves the truck and takes you straight on to choosing the bays.'
@@ -163,8 +163,8 @@
         if (truck) {
           s.push(
             { title: 'Choose the bays', route: 'deliveries', before: () => App.acceptFlow(truck.id), modal: true, target: modalPart('#alloc-table'), text: 'A split is suggested, <b>empty bays first</b>. Change any number. The total must match the bags counted. A bay can go over its size if you need it to.' },
-            { title: 'Pay to', modal: true, target: headingNext('Pay to'), text: 'The supplier\'s bank details are shown here, so you can check them before the payment is made. Missing details are flagged.' },
-            { title: 'Deduction', modal: true, target: () => { const el = document.querySelector('.modal [name=deductionPct]'); return el ? el.closest('.grid-2') : null; }, text: () => `Take a percentage off a wet or under-filled load instead of sending it back. The reason starts as "<b>${esc(Store.settings().defaultDeductionReason || 'Bags are not filled fully')}</b>". For a damp or wet load a percentage is suggested.` },
+            { title: 'Pay to', modal: true, target: headingNext('Pay to'), text: 'The supplier\'s bank details, to check before the payment is made. <b>Change bank details</b> corrects them here. If there are none, the boxes are open and must be filled in: no payment is made without a bank and account number.' },
+            { title: 'Deduction', modal: true, target: () => { const el = document.querySelector('.modal [name=deductionPct]'); return el ? el.closest('.grid-2') : null; }, text: () => `The fill check result is shown here. If the bags were not filled fully, take a percent off. The reason starts as "<b>${esc(Store.settings().defaultDeductionReason || 'Bags are not filled fully')}</b>". The box starts at 0.` },
             { title: 'Accept', modal: true, target: modalPart('[data-act=accept]'), text: '<b>Accept and create payment</b> puts the bags in the bays and makes the payment for authorisation. (In training nothing is accepted: this dialog closes when you go on.)' },
           );
         } else {
@@ -184,6 +184,8 @@
           { title: 'The yard in numbers', route: 'bays', target: '#view .stats', text: () => `Bags in the yard, bays in use, how many are dry, and the drying rate: a bag loses about <b>${Store.settings().dryingKgPerDay ?? 0.6} kg a day</b>, so 50 kg becomes about 30 kg in a month.` },
           { title: 'Red means use it first', route: 'bays', target: '#bay-tiles', text: () => `<b>Red</b> bays are dry (at or below ${D.moistureReadyPct(Store.settings())} % moisture) and should go to the gasifier first. Amber is still damp, blue is wet, grey is empty.` },
           { title: 'Filters', route: 'bays', target: '#bay-filters', text: 'Show only the bays with stock, the dry ones, or the empty ones.' },
+          { title: 'Daily bay check', route: 'bays', when: () => !!document.getElementById('day-check'), target: '#day-check', text: 'Each day, weigh <b>one bag</b> from each bay and type the weights here. A missed day is fine: leave that bay blank.' },
+          { title: 'A small graph per bay', route: 'bays', target: () => document.querySelector('.bay-tile .bt-foot') || document.getElementById('bay-tiles'), text: 'Each bay shows its bag weight over the last 14 days. <b>Show more</b> opens the full graph with every reading and how much weight it loses a day.' },
         ];
         if (bay) {
           s.push(
@@ -197,15 +199,15 @@
     },
     {
       id: 'gasifier', title: 'Feed the gasifier', badge: 'Fire starter', icon: 'flame',
-      blurb: 'Ask for biomass, approve the driest bay, weigh three bags.',
+      blurb: 'Ask for biomass, approve the driest bay, weigh one bag of each type.',
       when: () => sees('gasifier'),
       steps: () => [
         { title: 'Open Gasifier', route: 'dashboard', target: navTarget('gasifier'), tap: true, next: 'gasifier', text: () => (navTarget('gasifier')() && navTarget('gasifier')().id === 'more-btn' ? '<b>Gasifier</b> is under <b>More</b>.' : '{Tap} <b>Gasifier</b>.') },
         { title: 'Driest bays first', route: 'gasifier', target: '#view .bay-grid', text: 'Bays with stock, <b>driest first</b>, with today\'s bag weight and moisture. Red ones are dry: use them first.' },
         { title: 'Ask for biomass', route: 'gasifier', when: () => can('usage.request'), target: '#new-usage', text: '<b>Ask for bags</b> asks for a number of bags from a bay. It then waits for the supervisor.' },
         { title: 'Approve', route: 'gasifier', when: () => can('usage.approve'), text: 'As supervisor you see each request under <b>Open requests</b>. <b>Approve and choose bay</b>: the driest bay is offered first, and you can weigh a bag to confirm.' },
-        { title: 'Weigh and feed', route: 'gasifier', when: () => can('usage.consume'), text: 'When a request is approved, press <b>Weigh and feed</b>: weigh <b>three bags</b>. The average gives the weight going in and the moisture, and the bags leave the bay.' },
-        { title: 'The empty bags', route: 'gasifier', when: () => can('usage.consume'), text: 'In the same window, count the empty bags: <b>good</b> ones go back to the bag store as used bags, <b>torn</b> ones are thrown away. Something wrong with the biomass (stones, rot, very wet)? Tick the box and report it: the app knows which load the bags came from, even without serials.' },
+        { title: 'Weigh and feed', route: 'gasifier', when: () => can('usage.consume'), text: 'When a request is approved, press <b>Weigh and feed</b>: for each type (gliricidia, cinnamon…) type the <b>number of bags</b> and the weight of <b>one bag</b>. One bag × the bags gives the weight going in, and the bags leave the bay.' },
+        { title: 'The empty bags', route: 'gasifier', when: () => can('usage.consume'), text: 'In the same window, count the empty bags: <b>good</b> ones go back to the bag store as used bags, <b>torn</b> ones are thrown away. Something wrong (bags not full, stones, rot)? Tick the box and report it: the app knows which load the bags came from, even without serials.' },
         { title: 'What went to the gasifier', route: 'gasifier', target: () => [...document.querySelectorAll('#view h3')].find((h) => /What went to the gasifier/.test(h.textContent)), text: 'Everything that went to the gasifier: bay, bags, average weight, moisture and who did it.' },
       ],
     },
@@ -280,6 +282,7 @@
         { title: 'People', route: 'admin', when: () => can('user.manage'), before: () => clickTab('users'), target: () => document.getElementById('add-user') || document.getElementById('admin-body'), text: 'New people sign in with Google and wait here as <b>Awaiting approval</b>: pick their role. <b>Add staff account</b> adds someone by email. <b>Remove</b> signs a person out everywhere; their records stay.' },
         { title: 'Prices, moisture and drying', route: 'admin', when: () => can('settings.write'), before: () => clickTab('settings'), target: () => document.getElementById('save-settings') || document.getElementById('admin-body'), text: 'Rs per bag, the fill agreement, the 5 % sample, the moisture line, the drying rate (0.6 kg a day) and the default deduction reason. Every device follows what is saved here.' },
         { title: 'Activity log', route: 'admin', before: () => clickTab('audit'), target: '#admin-body', text: 'Every action, by whom and when, from every device. It cannot be edited.' },
+        { title: 'Staff log', route: 'admin', when: () => can('user.manage'), before: () => clickTab('staff'), target: '#admin-body', text: 'Everything each staff member did. Pick a <b>person</b>, an <b>area</b> or a <b>period</b>, see a summary by person, and download it as CSV.' },
         { title: 'Backups', route: 'admin', before: () => clickTab('data'), target: () => document.getElementById('backup-now') || document.getElementById('admin-body'), text: 'Take a backup file at any time. The cloud keeps the shared copy; every device also keeps its own.' },
       ],
     },

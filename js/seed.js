@@ -90,41 +90,52 @@
     const alloc = (i, bags) => ({ bayId: bays[i].id, bayCode: bays[i].code, bags });
 
     /* --------------------------- deliveries -------------------------- */
+    // Bags must be 100 % full for the full price; what is missing is taken
+    // off at acceptance (the fill check's cutPct), never anything for wetness.
+    const cut = (fc, bags, reason) => {
+      const m = D.applyDeduction(bags, fc.unitPrice, fc.cutPct);
+      return { deductionPct: m.deductionPct, deductionAmount: m.deductions, payableAmount: m.netAmount,
+        deductionReason: m.deductionPct ? (reason || `Bags not filled fully: ${fc.avgFillPct}% full on average`) : '' };
+    };
+    const fc1 = D.evaluateFillCheck({ bagCount: 300, fills: [96, 94, 98, 95, 97, 96, 95, 99, 94, 96, 97, 95, 98, 96, 95], settings });
+    const fc2 = D.evaluateFillCheck({ bagCount: 180, fills: [82, 85, 86, 83, 84, 87, 85, 84, 85], settings });
+    const fc3 = D.evaluateFillCheck({ bagCount: 240, fills: [100, 101, 100, 102, 100, 100, 101, 100, 100, 103, 100, 100], settings });
+    const fc5 = D.evaluateFillCheck({ bagCount: 160, fills: [93, 95, 92, 94, 93, 95, 92, 94], settings });
     // 1) 300 bags across three bays, full price. Came in heavy 12 days ago
     //    and has been drying since — the bay screen shows it dry by now.
     const d1 = Store.add('deliveries', {
       receiptNo: 'RC-2026-0001', supplierId: suppliers[0].id, biomassType: 'GLIRICIDIA',
       vehicleNo: 'SG LH-4521', driverName: 'R. Bandara', driverNic: '781234567V',
       grossKg: 9360, tareKg: 1860, netKg: 7500, bagCount: 300,
-      fillCheck: D.evaluateFillCheck({ bagCount: 300, fills: [96, 94, 98, 95, 97, 96, 95, 99, 94, 96, 97, 95, 98, 96, 95], settings }),
+      fillCheck: fc1,
       allocations: [alloc(0, 120), alloc(1, 100), alloc(2, 80)], serials: D.serialRange(PREFIX, 1, 300),
       status: 'ACCEPTED', deliveredAt: ago(12, 8), acceptedAt: ago(12, 10), acceptedBy: 'nimal.silva@efpl.org',
-      deductionPct: 0, deductionAmount: 0, payableAmount: 90000,
+      ...cut(fc1, 300),
       weighbridgeSlip: 'WB-8841', demo: true, notes: 'Three bays used: 1, 2 and 3.',
     }, 'seed');
 
-    // 2) 180 bags, fill check short -> reduced price, waiting for the supervisor.
+    // 2) 180 bags, only 84.6 % full -> 15.4 % taken off, waiting for the supervisor.
     const d2 = Store.add('deliveries', {
       receiptNo: 'RC-2026-0002', supplierId: suppliers[1].id, biomassType: 'GLIRICIDIA',
       vehicleNo: 'SG JD-7788', driverName: 'S. Fernando', driverNic: '823456789X',
       grossKg: 5900, tareKg: 2050, netKg: 3850, bagCount: 180,
-      fillCheck: D.evaluateFillCheck({ bagCount: 180, fills: [82, 85, 86, 83, 84, 87, 85, 84, 85], settings }),
+      fillCheck: fc2,
       allocations: [alloc(3, 180)], serials: D.serialRange(PREFIX, 301, 480),
       status: 'ACCEPTED', deliveredAt: ago(2, 9), acceptedAt: ago(2, 11), acceptedBy: 'nimal.silva@efpl.org',
-      deductionPct: 0, deductionAmount: 0, payableAmount: 48600,
+      ...cut(fc2, 180),
       weighbridgeSlip: 'WB-8856', demo: true,
-      notes: 'Average fill 84.6%: the supplier agreed to the reduced unit price.',
+      notes: 'Bags only 84.6% full: the supplier was told to fill them fully.',
     }, 'seed');
 
-    // 3) 240 bags, more than one bay holds: 200 in bay 5 and 40 in bay 7.
+    // 3) 240 full bags (full price), more than one bay holds: 200 in bay 5 and 40 in bay 7.
     const d3 = Store.add('deliveries', {
       receiptNo: 'RC-2026-0003', supplierId: suppliers[3].id, biomassType: 'CINNAMON',
       vehicleNo: 'SG KA-1290', driverName: 'M. Farook', driverNic: '901234567V',
       grossKg: 7300, tareKg: 2210, netKg: 5090, bagCount: 240,
-      fillCheck: D.evaluateFillCheck({ bagCount: 240, fills: [99, 97, 98, 100, 96, 98, 99, 97, 98, 100, 97, 98], settings }),
+      fillCheck: fc3,
       allocations: [alloc(4, 200), alloc(6, 40)], serials: D.serialRange(PREFIX, 481, 720),
       status: 'ACCEPTED', deliveredAt: ago(5, 7), acceptedAt: ago(5, 9), acceptedBy: 'nimal.silva@efpl.org',
-      deductionPct: 0, deductionAmount: 0, payableAmount: 72000,
+      ...cut(fc3, 240),
       weighbridgeSlip: 'WB-8822', demo: true,
     }, 'seed');
 
@@ -139,19 +150,17 @@
       notes: 'Weighed and sampled at the gate; waiting for the supervisor.',
     }, 'seed');
 
-    // 5) A wet load. Nothing is sent back: it is received and 10% is deducted.
-    const wet = D.applyDeduction(160, 300, 10);
+    // 5) Bags 93.5 % full: 6.5 % taken off. (The bags are heavy, but wetness never cuts the price.)
     const d5 = Store.add('deliveries', {
       receiptNo: 'RC-2026-0005', supplierId: suppliers[4].id, biomassType: 'OTHER',
       vehicleNo: 'SG GH-9021', driverName: 'A. Rathnayake', driverNic: '198022334455',
       grossKg: 6900, tareKg: 2000, netKg: 4900, bagCount: 160,
-      fillCheck: D.evaluateFillCheck({ bagCount: 160, fills: [93, 95, 92, 94, 93, 95, 92, 94], settings }),
+      fillCheck: fc5,
       allocations: [alloc(5, 160)], serials: D.serialRange(PREFIX, 721, 880),
       status: 'ACCEPTED', deliveredAt: ago(4, 11), acceptedAt: ago(4, 13), acceptedBy: 'nimal.silva@efpl.org',
-      deductionPct: wet.deductionPct, deductionAmount: wet.deductions, payableAmount: wet.netAmount,
-      deductionReason: 'Wet load: 30.6 kg per bag reads 48% moisture',
+      ...cut(fc5, 160),
       weighbridgeSlip: 'WB-8830', demo: true,
-      notes: 'Received wet after rain. Left in its own bay to dry before use.',
+      notes: 'Many bags only partly filled. Supplier told to fill the bags fully next time.',
     }, 'seed');
 
     // Average bag weight is what the moisture reading comes from.
@@ -197,7 +206,7 @@
       paymentNo: no, deliveryId: d.id, supplierId: supplier.id,
       supplierCode: supplier.code, supplierName: supplier.name,
       bags: d.bagCount, unitPrice: d.fillCheck.unitPrice,
-      grossAmount: d.fillCheck.amount, deductionPct: d.deductionPct || 0, deductionReason: d.deductionReason || '',
+      grossAmount: D.round2(d.bagCount * d.fillCheck.unitPrice), deductionPct: d.deductionPct || 0, deductionReason: d.deductionReason || '',
       deductions: d.deductionAmount || 0, netAmount: d.payableAmount, demo: true,
     }, patch), 'seed');
 
@@ -210,7 +219,7 @@
     });
     const p2 = pay('PAY-2026-0002', d2, suppliers[1], {
       status: 'PENDING_SUPERVISOR', createdAt: ago(2, 11),
-      history: [{ at: ago(2, 11), by: 'chaminda.raj@efpl.org', action: 'CREATED', note: 'Reduced price applied: fill check 84.6%' }],
+      history: [{ at: ago(2, 11), by: 'chaminda.raj@efpl.org', action: 'CREATED', note: 'Bags 84.6% full: 15.4% taken off' }],
     });
     pay('PAY-2026-0003', d3, suppliers[3], {
       status: 'SENT_TO_HEAD_OFFICE', createdAt: ago(5, 10), sentAt: ago(4, 9), sentBy: 'accounts@efpl.org',
@@ -222,7 +231,7 @@
     });
     pay('PAY-2026-0004', d5, suppliers[4], {
       status: 'PENDING_SUPERVISOR', createdAt: ago(4, 13),
-      history: [{ at: ago(4, 13), by: 'nimal.silva@efpl.org', action: 'CREATED', note: 'Received wet, 10% deducted instead of sending the load back' }],
+      history: [{ at: ago(4, 13), by: 'nimal.silva@efpl.org', action: 'CREATED', note: 'Bags 93.5% full: 6.5% taken off' }],
     });
 
     // Keep the running numbers ahead of the sample records.
@@ -270,7 +279,7 @@
       usageId: u2.id, deliveryId: d2.id, supplierId: suppliers[1].id, supplierName: suppliers[1].name,
       severity: 'HIGH', category: 'UNDERFILLED',
       description: 'Bags from this load were clearly under-filled when emptied at the gasifier, as the fill check at the gate had shown.',
-      correctiveAction: 'Supplier informed. The reduced price was applied to the load.',
+      correctiveAction: 'Supplier informed. 15.4% was taken off the load for bags not full.',
       status: 'OPEN', reportedBy: 'sunil.ops@efpl.org', reportedAt: ago(1, 10),
       notifiedAt: ago(1, 12), notifiedVia: 'Phone call to the supplier', demo: true,
     }, 'seed');
@@ -295,6 +304,47 @@
       at: ago(1, 17), returnedAt: ago(1, 17), recordedBy: 'chaminda.raj@efpl.org', demo: true,
     }, 'seed');
 
+    /* ------------------------- daily bay checks -----------------------
+       Most days someone weighs one bag from each bay with stock; some days
+       are missed. The weights follow the drying, with a little scatter. */
+    {
+      const rate = Number(settings.dryingKgPerDay ?? 0.6), driest = Number(settings.driestBagKg ?? 18);
+      const seen = new Set();
+      let jitter = 0;
+      for (const d of Store.all('deliveries')) {
+        if (d.status !== 'ACCEPTED' || !d.avgBagKg) continue;
+        const since = Date.parse(d.acceptedAt || d.deliveredAt);
+        const daysIn = Math.floor((Date.now() - since) / 864e5);
+        for (const a of d.allocations || []) {
+          if (!(a.bags > 0) || seen.has(a.bayId)) continue;
+          seen.add(a.bayId);
+          const bay = Store.byId('bays', a.bayId);
+          for (let day = Math.min(daysIn - 1, 20); day >= 1; day--) {
+            jitter = (jitter * 7 + 3) % 11;
+            if (jitter % 4 === 0) continue;                      // a missed day
+            const age = daysIn - day;
+            const w = Math.round(Math.max(driest, d.avgBagKg - rate * age + (jitter - 5) * 0.08) * 10) / 10;
+            Store.add('bagReturns', {
+              kind: 'BAY_CHECK', bayId: a.bayId, bayCode: bay ? bay.code : '', kg: w, moisturePct: D.moistureFromWeight(w, settings),
+              note: '', at: ago(day, 8), returnedAt: ago(day, 8), recordedBy: 'chaminda.raj@efpl.org', demo: true,
+            }, 'seed');
+            if (day <= 3) {
+              Store.add('audit', {
+                at: ago(day, 8), by: 'chaminda.raj@efpl.org', name: 'Chaminda Rajapaksha', role: 'storekeeper', action: 'bay.check',
+                entity: 'bay', entityId: bay ? bay.code : '', detail: `${bay ? bay.code : ''} daily check: one bag ${w} kg`, demo: true,
+              }, 'seed');
+            }
+          }
+        }
+      }
+      // the latest check is the bay's latest weighing (unless the gasifier weighed it later)
+      for (const id of seen) {
+        const bay = Store.byId('bays', id);
+        const last = Store.all('bagReturns').filter((r) => r.kind === 'BAY_CHECK' && r.bayId === id).sort((x, y) => String(x.at).localeCompare(String(y.at))).pop();
+        if (bay && last && (!bay.lastWeighAt || last.at > bay.lastWeighAt)) Object.assign(bay, { lastWeighKg: last.kg, lastWeighAt: last.at });
+      }
+    }
+
     /* ------------------------------ audit ---------------------------- */
     Store.add('audit', {
       at: ago(12, 10), by: 'nimal.silva@efpl.org', name: 'Nimal Silva', role: 'supervisor', action: 'delivery.accept',
@@ -302,7 +352,7 @@
     }, 'seed');
     Store.add('audit', {
       at: ago(2, 11), by: 'chaminda.raj@efpl.org', name: 'Chaminda Rajapaksha', role: 'storekeeper', action: 'payment.create',
-      entity: 'payment', entityId: p2.id, detail: 'PAY-2026-0002 created at the reduced price', demo: true,
+      entity: 'payment', entityId: p2.id, detail: 'PAY-2026-0002 created: bags 84.6% full, 15.4% taken off', demo: true,
     }, 'seed');
 
     Store.data.meta.seeded = true;

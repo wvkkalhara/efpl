@@ -3,6 +3,74 @@
 All notable changes to the EnerFab Biomass Storage system.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.9.1] — 2026-11-13
+
+### Added
+
+* **Bank details can be changed where the payment is made.** In "Accept
+  RC-…", the Pay to box has a **Change bank details** button. If the
+  supplier has no bank details, the boxes (bank, branch, account number,
+  account name) are open and must be filled in. A truck cannot be accepted,
+  and no payment made, without a bank and account number. The details are
+  saved on the supplier.
+* The payment window has the same box with **Save bank details**, until the
+  payment is paid. Approve, Send to Head Office and Mark as paid need the
+  bank details.
+* Every change is written to the activity log as "supplier.bank", with the
+  old and the new details.
+
+## [1.9.0] — 2026-11-13
+
+### Added
+
+* **Daily bay check.** Bays & stock has a "Daily bay check" button: weigh
+  one bag from each bay with stock and type the weights in one window. A bay
+  left blank is skipped, since a missed day is fine. The bay window has the
+  same check for one bay. Each check becomes the bay's latest weighing.
+* **A small graph on every bay tile** shows the bag moisture over the last 14
+  days, with "Checked today" or "Not checked today". **Show more** opens the
+  full graph (loads in, daily checks, test bags, gasifier) and every reading,
+  with the weight lost per day.
+* **Staff log (Administration, administrators only).** Everything each
+  staff member did, from every device. Filter by person, area, period or a
+  search. Shows a summary by person (actions, days active, main areas,
+  devices, last active), with Show more and a CSV download. It updates live.
+* **New report tables from real weighings:** how the weight goes down in
+  each bay, bag weight by days in the bay, daily check coverage, gasifier
+  weighing by type, bag fill and pay (100 % or more, 90–99 %, 80–89 %,
+  under 80 %), and month by month. Each one has a CSV button and they update live.
+* Demo data includes daily checks, with some days missed.
+
+### Changed
+
+* **Bay names must be unique.** Two bays cannot share a code or a name.
+  Case and extra spaces do not count as different.
+* **Supplier own-bags rule removed.** Suppliers never bring their own bags.
+* **Gasifier weighing:** for each type (gliricidia, cinnamon…), type the
+  number of bags and the weight of one bag. The weight is one bag × bags,
+  in place of the old 3-bag average. Help and training now say the same.
+* **Fill check pay:** 100 % full or more gets the full price, never more.
+  Below 100 %, the missing part is taken off. Moisture is recorded but never
+  cuts the price.
+
+## [1.8.1] — 2026-11-13
+
+### Changed
+
+* **Money is taken off for bags not filled fully, not for moisture.** Loads
+  on this site are not wet; the problem is bags not filled to capacity.
+  - Accepting a truck no longer suggests 5 % (damp) or 10 % (wet) from the
+    bag weight. The "Take off" box starts at 0 and the reason at "Bags are
+    not filled fully".
+  - Next to it, the fill check is shown: the average and whether the truck
+    is already paid at the lower price (for example 84.6 %, below 90 %, Rs 270
+    a bag instead of Rs 300).
+  - Saved settings with the old 5 % / 10 % suggestions are switched off once,
+    on every device. An administrator can switch them on again in Business
+    settings ("Take off for a damp/wet load"), if a wet load ever comes.
+  - "Change amount taken off" on a payment, the reports, the help and the
+    training say the same. Moisture is still shown for drying the bays.
+
 ## [1.8.0] — 2026-11-13
 
 ### Added

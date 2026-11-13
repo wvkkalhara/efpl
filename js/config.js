@@ -8,7 +8,7 @@
    ===================================================================== */
 window.EFPL_CONFIG = {
   appName: 'EnerFab Biomass Storage',
-  version: '1.8.0',
+  version: '1.9.1',
   build: '2026.11',
 
   /* ---- Firebase project (efpl-2feb8) ---- */
@@ -52,8 +52,9 @@ window.EFPL_CONFIG = {
   /* ---- Business defaults (editable in Settings) ---- */
   defaults: {
     unitPrice: 300,           // Rs / bag at full fill            (req 3)
-    reducedUnitPrice: 270,    // Rs / bag when the fill check fails (req 3)
-    fillThresholdPct: 90,     // average fill % that keeps full price
+    // Full price only for bags 100 % full; below that the part missing is
+    // taken off (92 % full -> 8 % off). Fixed in domain.js (FULL_FROM_PCT).
+    fillThresholdPct: 100,
     sampleSizePct: 5,         // % of bags pulled for the fill check
     minSampleSize: 1,         // no extra minimum: the sample is the full 5 % and every bag in it is measured
     // Moisture from bag weight: moisture % = (40 / 18) x kg - 20,
@@ -62,8 +63,11 @@ window.EFPL_CONFIG = {
     moistureCalKg2: 36, moistureCalPct2: 60,
     moistureWarnPct: 30,      // "damp" from here
     moistureHighPct: 45,      // "wet" from here — a reason to deduct, never to reject
-    deductDampPct: 5,         // % proposed for a damp load (supervisor can change it)
-    deductWetPct: 10,         // % proposed for a wet load
+    // Taking money off for moisture: OFF. On this site loads are not wet;
+    // the problem is bags not filled fully (the fill check and the reason
+    // "Bags are not filled fully"). An administrator can switch these on.
+    deductDampPct: 0,         // % proposed for a damp load
+    deductWetPct: 0,          // % proposed for a wet load
     bagSerialPrefix: 'EFPL-BG',
     maxBagsPerDelivery: 2000,
     // Bays: created the first time the yard is opened; each one can be

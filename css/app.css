@@ -1036,12 +1036,40 @@ html[data-lang="mix"] .lang-opt[data-lang="mix"] { background: var(--surface); c
    A dry bay is the one to act on, so it is the loud one. */
 .bay-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 10px; }
 .bay-tile {
-  display: flex; flex-direction: column; gap: 6px; text-align: left; cursor: pointer; font: inherit; color: var(--ink);
-  padding: 12px 12px 10px; border-radius: var(--r-card); background: var(--surface);
+  display: flex; flex-direction: column; gap: 6px; text-align: left; font: inherit; color: var(--ink);
+  padding: 12px 12px 8px; border-radius: var(--r-card); background: var(--surface);
   border: 1px solid var(--line); border-left: 5px solid var(--leaf);
   transition: transform 120ms var(--ease-out), border-color 140ms ease;
 }
-.bay-tile:active { transform: scale(.98); }
+.bay-tile:has(.bt-main:active) { transform: scale(.98); }
+.bt-main { display: flex; flex-direction: column; gap: 6px; text-align: left; cursor: pointer; font: inherit; color: inherit; background: none; border: 0; padding: 0; width: 100%; }
+.bt-spark { display: block; min-height: 30px; }
+.spark { display: block; width: 100%; height: 30px; }
+.spark path { stroke: var(--leaf); }
+.spark circle { fill: var(--leaf); }
+.spark.is-up path { stroke: var(--blue); } .spark.is-up circle { fill: var(--blue); }
+.spark-empty { font-size: .72rem; color: var(--ink-3); line-height: 30px; }
+.bt-foot { display: flex; align-items: center; justify-content: space-between; gap: 6px; border-top: 1px solid var(--line); padding-top: 6px; }
+.bt-check { font-size: .72rem; color: var(--ink-3); }
+.bt-check.is-done { color: var(--leaf); font-weight: 600; }
+.bt-more { font: inherit; font-size: .76rem; font-weight: 600; color: var(--ink-2); background: var(--surface-2); border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; cursor: pointer; min-height: 28px; white-space: nowrap; flex: none; }
+.bt-more:hover { border-color: var(--ink-3); }
+.bay-chart { width: 100%; height: auto; margin: 4px 0 14px; display: block; }
+.bay-chart .grid { stroke: var(--line); stroke-width: 1; }
+.bay-chart .ax { fill: var(--ink-3); font-size: 11px; }
+.bay-chart .ax.dry { fill: var(--red); }
+.bay-chart .dry-line { stroke: var(--red); stroke-width: 1.2; stroke-dasharray: 5 4; }
+.bay-chart .ln { fill: none; stroke: var(--leaf); stroke-width: 2.2; stroke-linejoin: round; }
+.bay-chart .pt { fill: var(--surface); stroke: var(--leaf); stroke-width: 2; }
+.bay-chart .pt-in { stroke: var(--ink-2); } .bay-chart .pt-out { stroke: var(--amber); } .bay-chart .pt-check { fill: var(--leaf); }
+.day-check .nm-input { max-width: 120px; }
+.bank-edit .bank-show { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.bank-edit .bank-show[hidden], .bank-edit .bank-form[hidden] { display: none; }
+.bank-edit .bank-form { padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--r-control); background: var(--surface-2); }
+.bank-edit .bank-form .row-actions { margin-top: 4px; }
+.link-btn { font: inherit; font-weight: 600; color: var(--ink); background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; text-align: left; }
+.staff-filters .field { margin-bottom: 8px; }
+#staff-results > section { margin-top: 14px; }
 .bt-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .bt-head b { font-family: var(--display); font-weight: 600; font-size: 1.15rem; }
 .bt-moist { font-family: var(--display); font-weight: 600; font-size: 1.15rem; font-variant-numeric: tabular-nums; }
@@ -1070,7 +1098,7 @@ button.bay-mini { font: inherit; color: inherit; text-align: left; cursor: point
 .bay-now b { font-family: var(--display); font-size: 1.5rem; font-weight: 600; line-height: 1.15; }
 .bay-weigh { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
 .bay-weigh .field { margin-bottom: 0; flex: 0 1 240px; }
-@media (hover: hover) and (pointer: fine) { .bay-tile:hover { border-color: var(--ink-3); } .bay-tile.is-dry:hover { border-color: var(--red); } }
+@media (hover: hover) and (pointer: fine) { .bay-tile:has(.bt-main:hover) { border-color: var(--ink-3); } .bay-tile.is-dry:hover { border-color: var(--red); } }
 @media (max-width: 760px) { .bay-tiles { grid-template-columns: 1fr 1fr; } .supplier-pick { flex-direction: column; } .alloc-grid { grid-template-columns: repeat(3, 1fr); } }
 
 /* -------------------------- print additions ------------------------ */
@@ -1297,3 +1325,14 @@ label.check input { width: 20px; height: 20px; margin: 1px 0 0; accent-color: va
 @keyframes help-in { from { opacity: 0; transform: translateY(-4px); } }
 .auth-card .help-bar { margin: 0 0 8px; }
 @media (prefers-reduced-motion: reduce) { .help-inner { animation: none; } }
+
+/* Accepting a truck: the fill check next to "Take money off" */
+.fill-note { background: var(--surface-2); border-radius: 12px; padding: 10px 14px; font-size: .92rem; line-height: 1.45; margin: 6px 0 0; }
+.fill-note.is-low { background: var(--amber-tint); color: #5a3a00; }
+
+/* Gasifier: one bag weight per type */
+.type-weigh { display: flex; flex-direction: column; gap: 6px; margin: 0 0 8px; }
+.type-row { display: grid; grid-template-columns: minmax(90px, 1fr) 1fr 1fr; gap: 10px; align-items: end; background: var(--surface-2); border-radius: 14px; padding: 10px 12px; }
+.type-row .type-name { align-self: center; font-size: 1rem; }
+.type-row .field { margin: 0; }
+@media (max-width: 520px) { .type-row { grid-template-columns: 1fr 1fr; } .type-row .type-name { grid-column: 1 / -1; } }
