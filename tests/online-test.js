@@ -330,6 +330,32 @@ async function run() {
     return Store.all('deliveries').length === n;
   });
 
+  results.push('\nTHE WHOLE DATABASE WAS EMPTIED BY HAND');
+  // the owner's device still knows the staff and their roles; the cloud has none
+  Store.data.users.push(
+    { id: 'usr_a', uid: 'uid-a', email: 'admin.a@efpl.org', name: 'A', role: 'admin', active: true, createdAt: old, updatedAt: old },
+    { id: 'usr_s', uid: 'uid-s', email: 'store.s@efpl.org', name: 'S', role: 'storekeeper', active: true, createdAt: old, updatedAt: old },
+    { id: 'usr_p', uid: 'uid-p', email: 'new.p@efpl.org', name: 'P', role: 'pending', active: true, createdAt: old, updatedAt: old },
+    { id: 'usr_x', uid: 'uid-x', email: 'gone.x@efpl.org', name: 'X', role: 'operator', active: true, deleted: true, createdAt: old, updatedAt: old },
+  );
+  FB.get = async () => { if (!net.up) throw netError(); return null; };
+  patches.length = 0;
+  await check('the owner\'s device puts the staff roles back in the cloud', async () => {
+    await Sync.now('manual');
+    const sent = (uid) => patches.find((p) => p[0] === `users/${uid}`);
+    const a = sent('uid-a');
+    const s = sent('uid-s');
+    return !!a && a[1].role === 'admin' && a[1].email === 'admin.a@efpl.org'
+      && !!s && s[1].role === 'storekeeper'
+      && !sent('uid-p') && !sent('uid-x');
+  });
+  signInAs('supervisor', 'sup@efpl.org');
+  patches.length = 0;
+  await check('someone who cannot manage staff does not', async () => {
+    await Sync.now('manual');
+    return !patches.some((p) => /^users\/uid-[as]$/.test(p[0]));
+  });
+
   Sync.stop();
   console.log('\n================ EnerFab Biomass Storage · staying online ================');
   console.log(results.join('\n'));

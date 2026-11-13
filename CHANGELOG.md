@@ -3,6 +3,19 @@
 All notable changes to the EnerFab Biomass Storage system.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.9.5] — 2026-11-13
+
+### Fixed
+
+* **Staff locked out after the database was emptied by hand.** Deleting the
+  whole Realtime Database in the Firebase console also deletes the staff
+  roles, so every administrator and staff member is refused by the cloud.
+  Now, when the owner (or an administrator who can still get in) opens the
+  app, their device puts back every staff member it knows, with their
+  role. People waiting for approval and people who were removed are not put
+  back. The database rules now allow the owner or an administrator to
+  re-create a missing staff entry. **Publish the new `firebase.rules.json`.**
+
 ## [1.9.4] — 2026-11-13
 
 ### Changed

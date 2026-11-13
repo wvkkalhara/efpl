@@ -142,8 +142,10 @@
     const me = Auth().current();
     if (!me) return { ok: false };
     let remote = null;
+    let wholeList = false;          // true when we could read every staff entry, not just our own
     try {
       remote = await FB.get('users', token);
+      wholeList = true;
     } catch (err) {
       if (err.code === 'NETWORK') return { ok: false, offline: true };
       if (isExpiredToken(err)) throw err;
@@ -158,12 +160,28 @@
         return { ok: false };
       }
     }
-    if (!remote || typeof remote !== 'object') return { ok: true, changed: 0 };
-
     const users = Store.data.users;
     const queued = new Set((Store.data.outbox || []).filter((o) => o.coll === 'users').map((o) => o.id));
     const canManage = Auth().can('user.manage');
     const roles = window.Domain.ASSIGNABLE_ROLES;
+
+    // The staff list is missing from the cloud (the database was emptied by
+    // hand, for example), but this device still knows who has which role:
+    // put those people back, so nobody is locked out. Only the owner or an
+    // administrator does this, and only when the whole list could be read.
+    if (wholeList && canManage) {
+      const there = remote && typeof remote === 'object' ? remote : {};
+      let restored = 0;
+      for (const u of users) {
+        if (!u.uid || there[u.uid] || u.deleted || queued.has(u.id)) continue;
+        if (!roles.includes(u.role) || Auth().isOwnerEmail(u.email)) continue;
+        u.updatedAt = new Date().toISOString();
+        Store.markDirty('users', u.id);
+        restored++;
+      }
+      if (restored) Store.save('restore-users');   // uploaded by this same sync round
+    }
+    if (!remote || typeof remote !== 'object') return { ok: true, changed: 0 };
     const myEmail = String(me.email || '').toLowerCase();
     const before = Auth().role();
     let changed = 0;

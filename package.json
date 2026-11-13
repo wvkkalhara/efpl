@@ -1,6 +1,6 @@
 {
   "name": "efpl-biomass-storage",
-  "version": "1.9.4",
+  "version": "1.9.5",
   "private": true,
   "description": "Offline-first biomass bag tracking, bay storage and supplier payments for EnerFab (Pvt) Ltd.",
   "scripts": {

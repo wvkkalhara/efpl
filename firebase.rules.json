@@ -18,7 +18,7 @@
       "$uid": {
         ".read": "auth != null && auth.uid === $uid",
         ".write": "auth != null && (((auth.token.email === 'w.v.k.kalhara@gmail.com' && auth.token.email_verified === true) || (root.child('users').child(auth.uid).child('role').isString() && root.child('users').child(auth.uid).child('role').val().matches(/^(admin)$/) && root.child('users').child(auth.uid).child('active').val() !== false)) || (auth.uid === $uid && newData.child('role').val() === data.child('role').val() && (!data.exists() || newData.child('active').val() === data.child('active').val())))",
-        ".validate": "newData.hasChildren(['email']) && (newData.child('email').val() === data.child('email').val() || newData.child('email').val() === auth.token.email)",
+        ".validate": "newData.hasChildren(['email']) && (newData.child('email').val() === data.child('email').val() || newData.child('email').val() === auth.token.email || (!data.exists() && ((auth.token.email === 'w.v.k.kalhara@gmail.com' && auth.token.email_verified === true) || (root.child('users').child(auth.uid).child('role').isString() && root.child('users').child(auth.uid).child('role').val().matches(/^(admin)$/) && root.child('users').child(auth.uid).child('active').val() !== false))))",
         "role": {
           ".validate": "newData.isString() && newData.val().matches(/^(admin|supervisor|storekeeper|operator|accounts|auditor)$/)"
         },
