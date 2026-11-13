@@ -157,6 +157,93 @@
     bayOptions() {
       return Store.where('bays', (b) => !b.deleted).map((b) => ({ value: b.id, label: `${b.code} — ${b.name}` }));
     },
+    /**
+     * The bag store, by count (serials are not needed). Two shelves:
+     *   new  — never used: bought in, or counted at a stock-take;
+     *   used — emptied at the gasifier and still good.
+     * Bags go out to suppliers from the used shelf first, topped up with new
+     * ones; torn bags found at the gasifier or in the store are thrown away.
+     * Movements are kept in the bagReturns collection (kind PURCHASE,
+     * DISCARD, COUNT), on the bag rounds (usedQty / newQty) and on the
+     * gasifier issues (bagsGood / bagsTorn). Records made before the bag
+     * store existed are shown in the history but do not move the shelves.
+     */
+    bagStore() {
+      const n = (v) => Number(v) || 0;
+      let fresh = 0, used = 0, discarded = 0, discarded30 = 0;
+      const moves = [];
+      const recent = (at) => Date.now() - (Date.parse(at || '') || 0) < 30 * 864e5;
+      for (const r of Store.all('bagReturns')) {
+        if (r.deleted) continue;
+        const at = r.at || r.returnedAt;
+        const by = r.recordedBy || '';
+        if (r.kind === 'PURCHASE') {
+          fresh += n(r.newQty);
+          moves.push({ at, kind: 'PURCHASE', what: 'New bags received', newD: n(r.newQty), usedD: 0, ref: r.returnNo, note: [r.vendor, r.note].filter(Boolean).join(' · '), by });
+        } else if (r.kind === 'DISCARD') {
+          const q = n(r.qty);
+          if (r.shelf === 'NEW') fresh -= q; else used -= q;
+          discarded += q; if (recent(at)) discarded30 += q;
+          moves.push({ at, kind: 'DISCARD', what: 'Thrown away', newD: r.shelf === 'NEW' ? -q : 0, usedD: r.shelf === 'NEW' ? 0 : -q, ref: r.returnNo, note: r.reason || r.note || '', by });
+        } else if (r.kind === 'COUNT') {
+          fresh += n(r.newDelta); used += n(r.usedDelta);
+          moves.push({ at, kind: 'COUNT', what: 'Store counted', newD: n(r.newDelta), usedD: n(r.usedDelta), ref: r.returnNo, note: `Counted ${n(r.newCounted).toLocaleString()} new and ${n(r.usedCounted).toLocaleString()} used${r.note ? ` · ${r.note}` : ''}`, by });
+        } else {
+          moves.push({ at, kind: 'OLD', what: 'Bag return (before the bag store)', newD: 0, usedD: 0, ref: r.returnNo, note: `${n(r.returnedBags)} checked: ${n(r.good)} good, ${n(r.repairable)} to repair, ${n(r.replaced)} replaced`, by });
+        }
+      }
+      for (const i of Store.all('bagIssues')) {
+        if (i.deleted) continue;
+        const sup = (Store.byId('suppliers', i.supplierId) || {}).name || '';
+        if (i.usedQty !== undefined || i.newQty !== undefined) {
+          used -= n(i.usedQty); fresh -= n(i.newQty);
+          moves.push({ at: i.issuedAt, kind: 'ISSUE', what: `Given to ${sup}`, newD: -n(i.newQty), usedD: -n(i.usedQty), ref: `Round ${i.roundNo}`, note: '', by: i.issuedBy || '' });
+        } else {
+          moves.push({ at: i.issuedAt, kind: 'OLD', what: `Given to ${sup} (before the bag store)`, newD: 0, usedD: 0, ref: `Round ${i.roundNo}`, note: `${n(i.qty)} numbered bags`, by: i.issuedBy || '' });
+        }
+      }
+      for (const u of Store.all('usageRequests')) {
+        if (u.deleted || u.status !== 'CONSUMED' || (u.bagsGood === undefined && u.bagsTorn === undefined)) continue;
+        used += n(u.bagsGood);
+        discarded += n(u.bagsTorn); if (recent(u.consumedAt)) discarded30 += n(u.bagsTorn);
+        moves.push({ at: u.consumedAt, kind: 'GASIFIER', what: 'Emptied at the gasifier', newD: 0, usedD: n(u.bagsGood), ref: u.requestNo, note: `${n(u.bagsGood)} good back to the store${n(u.bagsTorn) ? `, ${n(u.bagsTorn)} torn thrown away` : ''}`, by: u.consumedBy || '' });
+      }
+      moves.sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
+      const withSuppliers = VH.supplierBags().reduce((a, x) => a + Math.max(0, x.holding), 0);
+      const inBays = Store.where('bays', (b) => !b.deleted).reduce((a, b) => a + VH.bagsInBay(b.id), 0);
+      const reorder = Number(Store.settings().bagReorderLevel);
+      return {
+        new: fresh, used, total: fresh + used, discarded, discarded30, withSuppliers, inBays,
+        reorderLevel: Number.isFinite(reorder) && reorder >= 0 ? reorder : 500,
+        low: fresh <= (Number.isFinite(reorder) && reorder >= 0 ? reorder : 500),
+        started: moves.some((m) => m.kind !== 'OLD'),
+        moves,
+      };
+    },
+
+    /** How many bags each supplier is holding: given to them, less brought back full. */
+    supplierBags() {
+      const out = new Map();
+      for (const i of Store.all('bagIssues')) {
+        if (i.deleted || !i.supplierId) continue;
+        const q = (i.usedQty !== undefined || i.newQty !== undefined) ? (Number(i.usedQty) || 0) + (Number(i.newQty) || 0) : (Number(i.qty) || 0);
+        const r = out.get(i.supplierId) || { given: 0, back: 0, last: null };
+        r.given += q;
+        if (!r.last || String(i.issuedAt) > String(r.last)) r.last = i.issuedAt;
+        out.set(i.supplierId, r);
+      }
+      for (const d of Store.all('deliveries')) {
+        if (d.deleted || !d.supplierId || d.status === 'REJECTED') continue;
+        const r = out.get(d.supplierId) || { given: 0, back: 0, last: null };
+        r.back += Number(d.bagCount) || 0;
+        out.set(d.supplierId, r);
+      }
+      return [...out.entries()].map(([id, r]) => {
+        const s = Store.byId('suppliers', id) || {};
+        return { supplier: s, supplierId: id, given: r.given, back: r.back, holding: r.given - r.back, last: r.last };
+      }).sort((a, b) => b.holding - a.holding);
+    },
+
     /** Bags in a bay now: accepted into it, less issued to the gasifier from it. */
     bagsInBay(bayId) { return VH.bayLayers(bayId).reduce((a, l) => a + l.count, 0); },
     paymentFor(deliveryId) { return Store.all('payments').find((p) => p.deliveryId === deliveryId) || null; },
@@ -216,12 +303,12 @@
       add('payment.pay', toPay, 'info', `${n(toPay, 'payment is', 'payments are')} with Head Office, to mark as paid`, 'payments');
       const openQ = count(Store.all('qualityIssues'), 'OPEN');
       add('quality.resolve', openQ, 'danger', `${n(openQ, 'quality issue is', 'quality issues are')} open`, 'quality');
-      const empties = bags.filter((b) => b.status === 'CONSUMED' || b.status === 'RETURNED').length;
-      add('returns.write', empties, 'info', `${n(empties, 'empty bag', 'empty bags')} to check and return to the bag store`, 'returns');
-      const damaged = count(bags, 'DAMAGED');
-      add('returns.write', damaged, 'warn', `${n(damaged, 'bag is', 'bags are')} out for repair`, 'returns');
+      // the bag store: start it once, then watch the new-bag shelf
+      const bs = VH.bagStore();
+      if (!bs.started) add('returns.write', 1, 'info', 'Count the empty bags in the store to start the bag store', 'returns');
+      else if (bs.low) add('returns.write', 1, 'danger', `Only ${Math.max(0, bs.new).toLocaleString()} new bags left in the store: order more`, 'returns');
       const inStore = count(bags, 'IN_STOCK');
-      if (bags.length && inStore < 50) add('bag.generate', 1, 'danger', `Only ${inStore} numbered bags left in the bag store`, 'bags');
+      if (bags.length && inStore < 50) add('bag.generate', 1, 'warn', `Only ${inStore} numbered bags left: number and label a new batch if you use serials`, 'bags');
       const pendingUsers = Auth.listUsers().filter((u) => Auth.roleOf(u) === 'pending').length;
       add('user.manage', pendingUsers, 'warn', `${n(pendingUsers, 'person is', 'people are')} waiting for you to give them a role`, 'admin');
       return out;
@@ -378,8 +465,6 @@
       const pendingValue = pendingPay.reduce((a, p) => a + (p.netAmount || 0), 0);
       const openQuality = Store.all('qualityIssues').filter((q) => q.status === 'OPEN');
       const pendingUsage = Store.all('usageRequests').filter((u) => u.status === 'PENDING');
-      const bagStore = bags.filter((b) => b.status === 'IN_STOCK').length;
-      const damaged = bags.filter((b) => b.status === 'DAMAGED').length;
 
       const bays = Store.where('bays', (b) => !b.deleted).map((b) => ({ ...b, count: VH.bagsInBay(b.id) }));
 
@@ -398,8 +483,8 @@
             <h2>${esc(greeting())}, ${esc((Auth.current().name || '').split(' ')[0] || 'team')}</h2>
             <div class="hero-actions">
               ${Auth.can('delivery.create') ? '<button class="nm-btn primary" data-quick="intake"><i class="i i-plus"></i>Receive biomass</button>' : ''}
-              ${Auth.can('usage.approve') ? '<button class="nm-btn" data-quick="gasifier"><i class="i i-flame"></i>Approve bay issue</button>' : ''}
-              ${!Auth.can('usage.approve') && (Auth.can('usage.consume') || Auth.can('usage.request')) ? `<button class="nm-btn ${Auth.can('delivery.create') ? '' : 'primary'}" data-quick="gasifier"><i class="i i-flame"></i>Gasifier issue</button>` : ''}
+              ${Auth.can('usage.approve') ? '<button class="nm-btn" data-quick="gasifier"><i class="i i-flame"></i>Approve gasifier request</button>' : ''}
+              ${!Auth.can('usage.approve') && (Auth.can('usage.consume') || Auth.can('usage.request')) ? `<button class="nm-btn ${Auth.can('delivery.create') ? '' : 'primary'}" data-quick="gasifier"><i class="i i-flame"></i>Gasifier</button>` : ''}
               ${!Auth.can('delivery.create') && Auth.can('payment.release') ? '<button class="nm-btn primary" data-quick="payments">Payments</button>' : ''}
               ${App.canSee('reports') ? '<button class="nm-btn" data-quick="reports"><i class="i i-chart"></i>Reports</button>' : ''}
             </div>
@@ -424,7 +509,10 @@
           ${UI.stat('Received, last 30 days', `${(netIn / 1000).toFixed(1)} t`, `${bagsIn.toLocaleString()} bags accepted`)}
           ${UI.stat('Into the gasifier, last 7 days', `${(kgOut / 1000).toFixed(2)} t`, `${bagsOut} bags weighed out`)}
           ${App.canSee('payments') ? UI.stat('Payments in progress', money(pendingValue), `${pendingPay.length} awaiting action`, pendingPay.length ? 'warn' : null) : ''}
-          ${App.canSee('returns') || App.canSee('bags') ? UI.stat('Empty bags in store', bagStore.toLocaleString(), `${damaged} damaged`, bagStore < 50 ? 'danger' : null) : ''}
+          ${App.canSee('returns') || App.canSee('bags') ? (() => {
+            const bs = VH.bagStore();
+            return UI.stat('Empty bags in the store', Math.max(0, bs.used + bs.new).toLocaleString(), `${Math.max(0, bs.used).toLocaleString()} used, ${Math.max(0, bs.new).toLocaleString()} new`, bs.started && bs.low ? 'danger' : null);
+          })() : ''}
         </section>
 
         <section class="cols-2">
@@ -502,7 +590,7 @@
 
   const supplierName = (id) => (Store.byId('suppliers', id) || {}).name || '—';
   /** REJECTED only exists on records made before loads stopped being turned away. */
-  const STATUS_LABEL = { AWAITING_ACCEPTANCE: 'Awaiting acceptance', ACCEPTED: 'Accepted', REJECTED: 'Sent back (old record)' };
+  const STATUS_LABEL = { AWAITING_ACCEPTANCE: 'Waiting to be accepted', ACCEPTED: 'Accepted', REJECTED: 'Sent back (old record)' };
   const statusLabel = (st) => STATUS_LABEL[st] || String(st || '').replace(/_/g, ' ');
   const statusTone = (st) => (st === 'ACCEPTED' ? 'ok' : st === 'REJECTED' ? 'muted' : 'warn');
 
@@ -536,11 +624,11 @@
 
           <section class="nm-card pad">
             <div class="step-head"><span class="step-no">2</span><div><h3>Weighing and bag count</h3>
-              <p class="muted small">Count the bags and enter the weighbridge readings. The average bag weight gives the moisture.</p></div></div>
+              <p class="muted small">Type the weighbridge readings and count the bags. The app works out how wet the biomass is from the bag weight.</p></div></div>
             <div class="grid-4">
-              ${UI.field('Gross weight (kg)', UI.input('grossKg', { type: 'number', min: 0, step: '0.01', required: true }))}
-              ${UI.field('Tare weight (kg)', UI.input('tareKg', { type: 'number', min: 0, step: '0.01', required: true }))}
-              ${UI.field('Net weight (kg)', UI.input('netKg', { readonly: true, value: '' }))}
+              ${UI.field('Truck full, gross (kg)', UI.input('grossKg', { type: 'number', min: 0, step: '0.01', required: true }))}
+              ${UI.field('Truck empty, tare (kg)', UI.input('tareKg', { type: 'number', min: 0, step: '0.01', required: true }))}
+              ${UI.field('Biomass weight, net (kg)', UI.input('netKg', { readonly: true, value: '' }))}
               ${UI.field('Bags counted', UI.input('bagCount', { type: 'number', min: 1, max: s.maxBagsPerDelivery, required: true }))}
             </div>
             <div class="weigh-out" id="weigh-out"></div>
@@ -548,7 +636,7 @@
 
           <section class="nm-card pad">
             <div class="step-head"><span class="step-no">3</span><div><h3>Random fill check</h3>
-              <p class="muted small">Empty every sampled bag into the measuring drum and type each fill height as a % of the drum. All of the ${s.sampleSizePct}% sample must be entered. The agreement is ${s.fillThresholdPct}% average.</p></div></div>
+              <p class="muted small">Empty ${s.sampleSizePct} bags in every 100 into the drum and type how full each one was (%). Type them all. Full price if the average is ${s.fillThresholdPct}% or more.</p></div></div>
             <div class="row-actions" style="margin:0 0 14px">
               <button type="button" class="nm-btn" id="print-fill-sheet"><i class="i i-printer"></i>Print a blank sheet to fill in by hand</button>
               <span class="muted small">Write the readings on paper at the drum, then type them in here.</span>
@@ -558,19 +646,19 @@
               <div class="fill-result nm-inset" id="fill-result"></div>
             </div>
             <div class="grid-2" style="margin-top:12px">
-              ${UI.field('Supervisor decision', UI.select('outcome', [
-                { value: 'AUTO', label: 'Apply the agreement automatically' },
-                { value: 'OVERRIDE_FULL_PRICE', label: 'Pay the full price anyway (reason required)' },
+              ${UI.field('Price', UI.select('outcome', [
+                { value: 'AUTO', label: 'Use the fill check result' },
+                { value: 'OVERRIDE_FULL_PRICE', label: 'Pay the full price anyway (write why)' },
               ], { value: 'AUTO' }))}
-              ${UI.field('Reason or remarks', UI.input('fillNote', { placeholder: 'Optional unless paying full price anyway' }))}
+              ${UI.field('Note', UI.input('fillNote', { placeholder: 'Needed only when paying the full price anyway' }))}
             </div>
-            <p class="muted small">No load is turned away. If the supplier re-fills the bags, count and sample them again before registering. Wet or poor loads are received and a percentage is deducted when the supervisor accepts them.</p>
+            <p class="muted small">No truck is sent away. If the supplier fills the bags more, count and check them again. For wet or poor loads, the supervisor takes a percent off when accepting.</p>
           </section>
 
           <section class="nm-card pad">
-            <div class="step-head"><span class="step-no">4</span><div><h3>Bag serials (optional at the gate)</h3>
-              <p class="muted small">Scan or paste the serials on the bags. Ranges work: <code>EFPL-BG-000301-000480</code>. Leave empty to capture them during acceptance.</p></div></div>
-            ${UI.field('Serials on this truck', UI.textarea('serialsText', { rows: 3, placeholder: 'EFPL-BG-000301-000480   (or one serial per line)' }))}
+            <div class="step-head"><span class="step-no">4</span><div><h3>Bag numbers (only if the bags have them)</h3>
+              <p class="muted small">Scan or type the numbers on the bag stickers. A range works too: <code>EFPL-BG-000301-000480</code>. You can leave this empty.</p></div></div>
+            ${UI.field('Bag numbers on this truck', UI.textarea('serialsText', { rows: 3, placeholder: 'EFPL-BG-000301-000480   (or one serial per line)' }))}
             <div id="serial-preview" class="calc-strip"></div>
             ${UI.field('Notes', UI.textarea('notes', { rows: 2, placeholder: 'Anything the supervisor should know' }))}
           </section>
@@ -651,10 +739,10 @@
           <div class="fill-big ${tone}">${r.avgFillPct === null ? '—' : `${r.avgFillPct}%`}</div>
           <div class="muted small">average fill of ${valid.length} sample bag(s)</div>
           <div class="fill-table">
-            <div><span>Unit price</span><b>${money(r.unitPrice)}</b></div>
-            <div><span>Contract price</span><b>${money(r.fullPrice)}</b></div>
-            <div><span>Batch value</span><b>${money(r.amount)}</b></div>
-            <div><span>Spread of readings</span><b>${r.spread === null ? '—' : `${r.spread.toFixed(1)}%`}</b></div>
+            <div><span>Price per bag</span><b>${money(r.unitPrice)}</b></div>
+            <div><span>Full price</span><b>${money(r.fullPrice)}</b></div>
+            <div><span>Value of this load</span><b>${money(r.amount)}</b></div>
+            <div><span>Lowest to highest</span><b>${r.spread === null ? '—' : `${r.spread.toFixed(1)}%`}</b></div>
           </div>
           <p class="fill-action tone-${tone}">${esc(r.action)}</p>`;
       }
@@ -664,7 +752,7 @@
         const list = VH.parseSerials(form.querySelector('[name=serialsText]').value, prefix);
         const count = Number(bagCountEl.value) || 0;
         const box = form.querySelector('#serial-preview');
-        if (!list.length) { box.innerHTML = '<span class="muted">No serials captured — you can capture them at acceptance.</span>'; return; }
+        if (!list.length) { box.innerHTML = '<span class="muted">No bag numbers. That is fine.</span>'; return; }
         const known = Store.all('bags');
         const unknown = list.filter((sn) => !known.some((b) => b.serial === sn));
         const mismatch = count && list.length !== count;
@@ -889,7 +977,7 @@
       view.innerHTML = `
         <div class="toolbar">
           <div class="seg" role="tablist">
-            ${['All', 'Awaiting acceptance', 'Accepted'].map((t, i) => {
+            ${['All', 'Waiting to be accepted', 'Accepted'].map((t, i) => {
               const vals = ['ALL', 'AWAITING_ACCEPTANCE', 'ACCEPTED'];
               return `<button class="seg-btn ${i === 0 ? 'active' : ''}" data-filter="${vals[i]}">${t}${vals[i] === 'AWAITING_ACCEPTANCE' && pending.length ? ` <span class="count">${pending.length}</span>` : ''}</button>`;
             }).join('')}
@@ -1045,7 +1133,7 @@
       size: 'lg',
       body: `
         <div class="form-errors" role="alert" id="accept-errors"></div>
-        <p class="muted">Choose the bays for these <b>${d.bagCount}</b> bags. A split has been suggested, empty bays first; change any number. The bags per bay must add up exactly.</p>
+        <p class="muted">Choose the bays for these <b>${d.bagCount}</b> bags. Empty bays are filled in for you; change any number. The total must be ${d.bagCount}.</p>
         ${bays.length ? '' : '<div class="banner banner-warn">There are no bays yet. Add them under Bays &amp; stock first.</div>'}
         <div class="alloc-grid" id="alloc-table">
           ${bays.map((b) => `<label class="alloc-cell ${plan.get(b.id) ? 'on' : ''}">
@@ -1057,21 +1145,21 @@
         <p class="alloc-total">Total <b id="alloc-total">${d.bagCount}</b> of ${d.bagCount} <span id="alloc-hint" class="muted"></span></p>
         <h4>Pay to</h4>
         ${VH.bankHtml(sup0)}
-        <h4>Deduction</h4>
-        <p class="muted small">Every load is received. If this one is wet or below standard, take a percentage off its value here instead of sending it back.</p>
+        <h4>Take money off</h4>
+        <p class="muted small">Every truck is accepted. If this load is wet or the bags are not full, take a percent off the price here.</p>
         ${d.avgBagKg ? VH.moistureScale(d.avgBagKg, { compact: true }) : ''}
         <div class="grid-2" style="margin-top:12px">
-          ${UI.field('Deduct from this batch (%)', UI.input('deductionPct', { type: 'number', min: 0, max: 100, step: '0.5', value: suggest.pct }),
+          ${UI.field('Take off (%)', UI.input('deductionPct', { type: 'number', min: 0, max: 100, step: '0.5', value: suggest.pct }),
             suggest.pct ? `Suggested ${suggest.pct}% because the load reads ${esc(D.MOISTURE_LABEL[suggest.band])}. Change it, or set 0 for no deduction.` : 'No deduction suggested: the load reads dry enough.')}
-          ${UI.field('Reason for the deduction', UI.input('deductionReason', { value: defaultReason, placeholder: 'Bags are not filled fully' }),
+          ${UI.field('Why', UI.input('deductionReason', { value: defaultReason, placeholder: 'Bags are not filled fully' }),
             suggest.reason ? `Only used when the percentage is above 0. Write "${esc(suggest.reason)}" instead if the deduction is for moisture.` : 'Only used when the percentage is above 0.')}
         </div>
         <div class="calc-strip" id="deduct-out"></div>
         <div class="grid-2" style="margin-top:12px">
-          ${UI.field('Bag serials on this truck', UI.textarea('serials', { rows: 3, value: (d.serials || []).join(' '), placeholder: 'EFPL-BG-000301-000480' }))}
+          ${UI.field('Bag numbers on this truck (if any)', UI.textarea('serials', { rows: 3, value: (d.serials || []).join(' '), placeholder: 'EFPL-BG-000301-000480' }))}
           ${UI.field('Supervisor note', UI.textarea('acceptNote', { rows: 3, placeholder: 'Count verified, bags checked for damage…' }))}
         </div>
-        <p class="small muted">Only serials already in the bag registry are attached. A serial that is unknown, or already sitting in a bay, is skipped and reported.</p>`,
+        <p class="small muted">Only bag numbers already in the Bag registry are used. Unknown numbers are skipped.</p>`,
       footer: `<button class="nm-btn" data-close>Cancel</button>
                <button class="nm-btn primary" data-act="accept">Accept and create payment</button>`,
       onMount(el, close) {

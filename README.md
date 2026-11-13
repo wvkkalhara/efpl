@@ -45,7 +45,7 @@ No framework and no runtime dependencies — the app is plain HTML, CSS and Java
 | 11 | Problem traced back to the supplier | Trace a bag · Quality |
 | 12 | Receipt number + printed sticker + invoice, logo and bank details on every print | Print receipt · Invoice · Print labels |
 | 13 | Supplier writes supplier no. + farmer no. on the tag | Label write-in boxes |
-| 14 | Bag returns, repair, replacement order | Bag returns |
+| 14 | Bag store: new and used bags, used given out first, torn bags out at the gasifier, stock-take, bags held by each supplier | Bag store |
 | 15 | Reports | Reports (CSV + print) |
 
 Plus the owner controls: **pause/restore the whole service**, with the guarantee that the paused screen can only appear when the owner puts it there (no expiry dates anywhere), and that no data is ever deleted by pausing.

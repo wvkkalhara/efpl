@@ -35,7 +35,7 @@
           ${UI.stat('Numbered bags in store', (counts.IN_STOCK || 0).toLocaleString(), 'ready to issue')}
           ${UI.stat('With suppliers', (counts.ISSUED || 0).toLocaleString(), 'out on a filling round', counts.ISSUED ? 'warn' : null)}
           ${UI.stat('Numbered bags in bays', (counts.STORED || 0).toLocaleString(), 'bags with a serial; the bays also hold bags without one')}
-          ${UI.stat('Emptied, awaiting check', `${((counts.CONSUMED || 0) + (counts.RETURNED || 0)).toLocaleString()}`, `${counts.DAMAGED || 0} damaged`, counts.DAMAGED ? 'warn' : null)}
+          ${UI.stat('Numbered bags thrown away', `${(counts.RETIRED || 0).toLocaleString()}`, 'torn or worn out')}
         </section>
 
         <div class="toolbar">
@@ -49,7 +49,7 @@
           <div class="toolbar-right">
             ${Auth.can('bag.generate') ? '<button class="nm-btn" id="gen-bags"><i class="i i-plus"></i>Number new bags</button>' : ''}
             ${(Auth.can('bag.generate') || Auth.can('bag.issue')) && bags.length ? '<button class="nm-btn" id="print-bag-labels"><i class="i i-printer"></i>Print labels</button>' : ''}
-            ${Auth.can('bag.issue') ? '<button class="nm-btn primary" id="issue-bags">Issue to supplier</button>' : ''}
+            ${Auth.can('bag.issue') ? '<button class="nm-btn primary" id="issue-bags">Issue bags to a supplier</button>' : ''}
           </div>
         </div>
         <div id="bag-table"></div>
@@ -205,56 +205,103 @@
     });
   };
 
-  /* ------------------------- issue to supplier ----------------------- */
-  App.issueBags = function () {
-    const s = Store.settings();
-    const available = Store.where('bags', (b) => b.status === 'IN_STOCK');
+  /* ------------------------- issue to supplier -----------------------
+     Bags go out from the bag store: the USED shelf first (they are already
+     paid for), topped up from the NEW shelf. The split is suggested and can
+     be changed. Numbered bags in the store are attached as well, if the site
+     uses serials, so the slip can list them. */
+  App.issueBags = function (supplierId) {
+    if (!Auth.can('bag.issue')) return UI.toast('Your role cannot issue bags', 'danger');
+    const st = VH.bagStore();
+    const numbered = Store.where('bags', (b) => b.status === 'IN_STOCK');
     const lastRound = Store.all('bagIssues').reduce((a, i) => Math.max(a, i.roundNo || 0), 0);
+    const holding = new Map(VH.supplierBags().map((x) => [x.supplierId, x.holding]));
+    const start = Math.max(0, Math.min(300, st.total));
 
     UI.modal({
-      title: 'Issue numbered bags to a supplier',
+      title: 'Issue bags to a supplier',
       size: 'md',
-      body: `<p class="muted">A bag round is the same numbered bags travelling out and coming back filled. The supplier writes his supplier number on the tag before delivering.</p>
-        ${UI.field('Supplier', UI.select('supplierId', VH.supplierOptions(), { required: true, placeholder: 'Select supplier…' }))}
+      body: `<div class="form-errors" role="alert"></div>
+        <div class="bag-shelves">
+          <div><span class="muted small">Used bags in the store</span><b>${Math.max(0, st.used).toLocaleString()}</b></div>
+          <div><span class="muted small">New bags in the store</span><b>${Math.max(0, st.new).toLocaleString()}</b></div>
+        </div>
+        ${UI.field('Supplier', UI.select('supplierId', VH.supplierOptions(), { required: true, placeholder: 'Select supplier…', value: supplierId || '' }), '<span id="sup-holding"></span>')}
+        <div class="grid-3">
+          ${UI.field('How many bags?', UI.input('qty', { type: 'number', min: 1, value: start }))}
+          ${UI.field('From used bags', UI.input('usedQty', { type: 'number', min: 0, value: 0 }))}
+          ${UI.field('From new bags', UI.input('newQty', { type: 'number', min: 0, value: 0 }))}
+        </div>
+        <p class="small muted" id="split-note">Used bags go first; new bags make up the rest.</p>
         <div class="grid-2">
           ${UI.field('Round number', UI.input('roundNo', { type: 'number', min: 1, value: lastRound + 1 }))}
-          ${UI.field('How many bags?', UI.input('qty', { type: 'number', min: 1, max: 5000, value: Math.min(300, available.length) }), `${available.length.toLocaleString()} numbered bags available`)}
+          ${UI.field('How is it shared?', UI.select('sharedWith', [
+            { value: 'Printed allocation slip', label: 'Printed allocation slip' },
+            { value: 'Printed allocation slip + WhatsApp', label: 'Printed allocation slip + WhatsApp' },
+            { value: 'WhatsApp only', label: 'WhatsApp only' },
+          ]))}
         </div>
-        ${UI.field('How is the number shared?', UI.select('sharedWith', [
-          { value: 'Printed allocation slip', label: 'Printed allocation slip' },
-          { value: 'Printed allocation slip + WhatsApp', label: 'Printed allocation slip + WhatsApp' },
-          { value: 'WhatsApp list only', label: 'WhatsApp list only' },
-        ]))}
-        <div class="nm-card pad-sm tip">
-          <b>Why a serial only?</b>
-          <p class="small muted">As agreed on site: a bag carries one serial number and nothing else. The supplier number is written in the blank box on the sticker, so the same bag can go to a different supplier in the next round without a reprint.</p>
-        </div>`,
+        ${numbered.length ? `<label class="check"><input type="checkbox" name="withSerials" checked /> Attach numbered bags from the store (${numbered.length.toLocaleString()} available), so the slip lists their serials</label>` : ''}`,
       footer: '<button class="nm-btn" data-close>Cancel</button><button class="nm-btn primary" data-act="issue">Issue bags</button>',
       onMount(el, close) {
+        const q = (n) => el.querySelector(`[name=${n}]`);
+        let manual = false;
+        const suggest = () => {
+          const qty = Math.max(0, Number(q('qty').value) || 0);
+          const fromUsed = Math.min(qty, Math.max(0, st.used));
+          q('usedQty').value = fromUsed;
+          q('newQty').value = qty - fromUsed;
+          note();
+        };
+        const note = () => {
+          const u = Number(q('usedQty').value) || 0, nw = Number(q('newQty').value) || 0, qty = Number(q('qty').value) || 0;
+          const msgs = [];
+          if (u + nw !== qty) msgs.push(`<span class="t-warn">Used + new = ${u + nw}, not ${qty}</span>`);
+          if (u > Math.max(0, st.used)) msgs.push(`<span class="t-warn">Only ${Math.max(0, st.used)} used bags in the store</span>`);
+          if (nw > Math.max(0, st.new)) msgs.push(`<span class="t-warn">Only ${Math.max(0, st.new)} new bags in the store</span>`);
+          if (!msgs.length) msgs.push(nw ? `${u} used bags first, then ${nw} new.` : `All ${u} from the used bags.`);
+          el.querySelector('#split-note').innerHTML = msgs.join(' ');
+          const sid = q('supplierId').value;
+          const h = sid ? (holding.get(sid) || 0) : null;
+          el.querySelector('#sup-holding').textContent = sid ? (h > 0 ? `Already holding ${h} of our bags` : 'Holding none of our bags') : '';
+        };
+        q('qty').addEventListener('input', () => { if (!manual) suggest(); else note(); });
+        q('usedQty').addEventListener('input', () => { manual = true; q('newQty').value = Math.max(0, (Number(q('qty').value) || 0) - (Number(q('usedQty').value) || 0)); note(); });
+        q('newQty').addEventListener('input', () => { manual = true; note(); });
+        q('supplierId').addEventListener('change', note);
+        suggest();
+
         el.querySelector('[data-act=issue]').addEventListener('click', () => {
-          const supplierId = el.querySelector('[name=supplierId]').value;
-          const qty = Number(el.querySelector('[name=qty]').value) || 0;
-          const roundNo = Number(el.querySelector('[name=roundNo]').value) || lastRound + 1;
-          const sharedWith = el.querySelector('[name=sharedWith]').value;
-          if (!supplierId) return UI.toast('Choose a supplier', 'warn');
-          if (qty < 1) return UI.toast('Enter how many bags', 'warn');
-          const pool = Store.where('bags', (b) => b.status === 'IN_STOCK').slice(0, qty);
-          if (!pool.length) return UI.toast('No numbered bags left in the store — number a new batch first', 'danger');
+          const sid = q('supplierId').value;
+          const qty = Number(q('qty').value) || 0;
+          const usedQty = Number(q('usedQty').value) || 0;
+          const newQty = Number(q('newQty').value) || 0;
+          const roundNo = Number(q('roundNo').value) || lastRound + 1;
+          const errors = [];
+          if (!sid) errors.push('Choose the supplier');
+          if (qty < 1) errors.push('Enter how many bags');
+          if (usedQty < 0 || newQty < 0) errors.push('Bag numbers cannot be below zero');
+          if (usedQty + newQty !== qty) errors.push(`Used (${usedQty}) and new (${newQty}) must add up to ${qty}`);
+          if (usedQty > Math.max(0, st.used)) errors.push(`Only ${Math.max(0, st.used)} used bags are in the store`);
+          if (newQty > Math.max(0, st.new)) errors.push(`Only ${Math.max(0, st.new)} new bags are in the store. Receive new bags first, or count the store if the figure is wrong.`);
+          UI.showErrors(el, errors);
+          if (errors.length) return;
 
           const now = new Date().toISOString();
+          const withSerials = !!(q('withSerials') && q('withSerials').checked);
+          const pool = withSerials ? Store.where('bags', (b) => b.status === 'IN_STOCK').slice(0, qty) : [];
+          const sup = Store.byId('suppliers', sid) || {};
+          const issue = Store.add('bagIssues', {
+            roundNo, supplierId: sid, qty, usedQty, newQty, mode: pool.length ? 'SERIAL_ONLY' : 'COUNT',
+            serials: pool.map((b) => b.serial), issuedAt: now, issuedBy: Auth.current().email, sharedWith: q('sharedWith').value,
+          }, 'bag-issue');
           for (const b of pool) {
-            Object.assign(b, { status: 'ISSUED', supplierId, supplierCode: (Store.byId('suppliers', supplierId) || {}).code, issuedAt: now, roundNo, updatedAt: now });
+            Object.assign(b, { status: 'ISSUED', supplierId: sid, supplierCode: sup.code, issuedAt: now, roundNo, bagIssueId: issue.id, updatedAt: now });
             Store.markDirty('bags', b.id);
           }
-          const issue = Store.add('bagIssues', {
-            roundNo, supplierId, qty: pool.length, mode: 'SERIAL_ONLY',
-            serials: pool.map((b) => b.serial), issuedAt: now, issuedBy: Auth.current().email, sharedWith,
-          }, 'bag-issue');
-          for (const b of pool) { b.bagIssueId = issue.id; Store.markDirty('bags', b.id); }
           Store.save('bag-issue');
-
-          VH.audit('bag.issue', 'bagIssue', issue.id, `Round ${roundNo} · ${pool.length} bags to ${supplierName(supplierId)} (${pool[0].serial} … ${pool[pool.length - 1].serial})`);
-          UI.toast(`${pool.length} bags issued to ${supplierName(supplierId)}`, 'ok');
+          VH.audit('bag.issue', 'bagIssue', issue.id, `Round ${roundNo} · ${qty} bags to ${sup.name || ''} (${usedQty} used, ${newQty} new)${pool.length ? ` · serials ${pool[0].serial} … ${pool[pool.length - 1].serial}` : ''}`);
+          UI.toast(`${qty} bags given to ${sup.name || 'the supplier'}: ${usedQty} used, ${newQty} new`, 'ok', 5000);
           close();
           App.refresh();
           App.printAllocationSlip(issue.id);
@@ -267,20 +314,24 @@
     const issue = Store.byId('bagIssues', issueId);
     if (!issue) return;
     const sup = Store.byId('suppliers', issue.supplierId) || {};
-
     const list = issue.serials || [];
-    // every bag issued is listed, in two columns (left column first)
+    const counted = issue.usedQty !== undefined || issue.newQty !== undefined;
+    const total = counted ? (Number(issue.usedQty) || 0) + (Number(issue.newQty) || 0) : list.length;
+    // every numbered bag is listed, in two columns (left column first)
     const half = Math.ceil(list.length / 2);
-    const html = `${VH.printHeader('Bag allocation slip', `Round ${issue.roundNo} · ${sup.code} ${sup.name} · ${dt(issue.issuedAt)}`)}
-      <p class="meta">${list.length} numbered bags issued. Every bag carries the serial below. Please write your <b>supplier number</b> in the box on the bag tag before delivering.</p>
-      <table><thead><tr><th>#</th><th>Serial</th><th>Returned (tick)</th><th>#</th><th>Serial</th><th>Returned (tick)</th></tr></thead>
+    const html = `${VH.printHeader('Bag allocation slip', `Round ${issue.roundNo} · ${sup.code || ''} ${sup.name || ''} · ${dt(issue.issuedAt)}`)}
+      <table>
+        <tr><th>Supplier</th><td>${esc(`${sup.code || ''} · ${sup.name || ''}`)}</td><th>Bags given</th><td><b>${total}</b></td></tr>
+        ${counted ? `<tr><th>Used bags</th><td>${Number(issue.usedQty) || 0}</td><th>New bags</th><td>${Number(issue.newQty) || 0}</td></tr>` : ''}
+      </table>
+      <p class="meta">Please bring these bags back filled. ${list.length ? 'Every bag carries the serial listed below; write your <b>supplier number</b> in the box on the bag tag before delivering.' : 'Bags that are torn are replaced at the store.'}</p>
+      ${list.length ? `<table><thead><tr><th>#</th><th>Serial</th><th>Returned (tick)</th><th>#</th><th>Serial</th><th>Returned (tick)</th></tr></thead>
         <tbody>${Array.from({ length: half }, (_, i) => `
           <tr><td>${i + 1}</td><td class="mono">${esc(list[i])}</td><td></td>
               <td>${list[i + half] ? i + 1 + half : ''}</td>
               <td class="mono">${esc(list[i + half] || '')}</td><td></td></tr>`).join('')}
-        </tbody></table>
-
-      <div class="sign">Supplier acknowledgement</div>`;
+        </tbody></table>` : ''}
+      <div style="display:flex;gap:20mm;margin-top:12mm"><div class="sign">Issued by (bag store)</div><div class="sign">Supplier acknowledgement</div></div>`;
     UI.print(html, `Allocation slip round ${issue.roundNo}`);
     VH.audit('bag.issue.print', 'bagIssue', issue.id, `Allocation slip for round ${issue.roundNo} printed`);
   };
@@ -412,7 +463,7 @@
       footer: `
         <button class="nm-btn" data-act="history">History</button>
         ${Auth.can('bay.allocate') ? '<button class="nm-btn" data-act="edit">Edit bay</button>' : ''}
-        ${Auth.can('usage.request') ? `<button class="nm-btn primary" data-act="issue" ${x.count ? '' : 'disabled'}><i class="i i-flame"></i>Request issue</button>` : ''}`,
+        ${Auth.can('usage.request') ? `<button class="nm-btn primary" data-act="issue" ${x.count ? '' : 'disabled'}><i class="i i-flame"></i>Ask for bags</button>` : ''}`,
       onMount(el, close) {
         el.addEventListener('click', (e) => {
           const btn = e.target.closest('[data-act]');
@@ -537,7 +588,7 @@
 
   /* ============================== GASIFIER =========================== */
   App.register('gasifier', {
-    title: 'Gasifier issue',
+    title: 'Gasifier',
     render(view) {
       const s = Store.settings();
       const requests = Store.all('usageRequests').slice().sort((a, b) => Date.parse(b.requestedAt) - Date.parse(a.requestedAt));
@@ -548,9 +599,9 @@
 
       view.innerHTML = `
         <section class="nm-card pad">
-          <div class="card-head"><h3>Which bay to draw from</h3>
-            ${Auth.can('usage.request') ? '<button class="nm-btn primary" id="new-usage"><i class="i i-plus"></i>New issue request</button>' : ''}</div>
-          <p class="muted">Bays with stock, driest first. The moisture is today's estimate from the bag weight and the days in the bay; the supervisor can weigh a bag to confirm. Bays marked dry should go to the gasifier first.</p>
+          <div class="card-head"><h3>Which bay to use</h3>
+            ${Auth.can('usage.request') ? '<button class="nm-btn primary" id="new-usage"><i class="i i-plus"></i>Ask for bags</button>' : ''}</div>
+          <p class="muted">Bays with bags, driest first. Use the dry (red) bays first. The supervisor can weigh a bag to check.</p>
           <div class="bay-grid tight">
             ${bays.map((x) => `<button class="nm-inset pad-sm bay-mini ${x.ready ? 'is-dry' : ''}" data-bay-open="${x.bay.id}">
                 <div class="bay-head"><b>${esc(x.bay.code)}</b>${badge(`${x.count} bags`, 'ok')}</div>
@@ -571,13 +622,13 @@
                 ${r.approvedNote ? `<div class="small">Supervisor: ${esc(r.approvedNote)}</div>` : ''}</div>
               <div class="request-actions">
                 ${r.status === 'PENDING' && Auth.can('usage.approve') ? `<button class="nm-btn tiny primary" data-approve="${r.id}">Approve and choose bay</button>` : ''}
-                ${r.status === 'APPROVED' && Auth.can('usage.consume') ? `<button class="nm-btn tiny primary" data-consume="${r.id}">Weigh and consume</button>` : ''}
+                ${r.status === 'APPROVED' && Auth.can('usage.consume') ? `<button class="nm-btn tiny primary" data-consume="${r.id}">Weigh and feed</button>` : ''}
               </div>
             </div>`).join('')}</div>
         </section>` : ''}
 
         <section class="nm-card pad">
-          <h3>Issue history</h3>
+          <h3>What went to the gasifier</h3>
           ${UI.table({
             rows: requests.filter((r) => r.status === 'CONSUMED').slice(0, 40),
             empty: 'Nothing issued to the gasifier yet.',
@@ -704,18 +755,36 @@
     const take = Math.min(r.bags, VH.bagsInBay(r.bayId));
     const bayBags = Store.where('bags', (b) => b.bayId === r.bayId && b.status === 'STORED')
       .sort((a, b) => String(a.deliveredAt || '').localeCompare(String(b.deliveredAt || '')));
+    // which loads these bags come from: the oldest in the bay first
+    const fromLoads = [];
+    let left = take;
+    for (const l of VH.bayLayers(r.bayId)) {
+      if (left <= 0) break;
+      const n = Math.min(left, l.count);
+      fromLoads.push({ deliveryId: l.deliveryId, receiptNo: l.delivery.receiptNo, supplierId: l.delivery.supplierId, bags: n });
+      left -= n;
+    }
+    const loadsText = fromLoads.map((l) => `${l.receiptNo} (${(Store.byId('suppliers', l.supplierId) || {}).name || ''}, ${l.bags})`).join(', ');
 
     UI.modal({
-      title: `Weigh and consume ${r.requestNo}`,
-      body: `<p class="muted">Weigh three bags as they go into the gasifier. Their average is applied to the whole issue to give the outgoing weight.</p>
+      title: `Weigh and feed ${r.requestNo}`,
+      body: `<div class="form-errors" role="alert"></div>
+        <p class="muted">Weigh 3 bags as they go into the gasifier. The app uses their average for all the bags.</p>
         <div class="grid-3">
           ${UI.field('Bag 1 (kg)', UI.input('w1', { type: 'number', step: '0.01', min: 0, required: true }))}
           ${UI.field('Bag 2 (kg)', UI.input('w2', { type: 'number', step: '0.01', min: 0, required: true }))}
           ${UI.field('Bag 3 (kg)', UI.input('w3', { type: 'number', step: '0.01', min: 0, required: true }))}
         </div>
         <div id="consume-out"></div>
-        <p class="small muted">${take} bags leave ${esc(r.bayCode)}. The empty bags then wait under Bag returns to be checked.</p>`,
-      footer: '<button class="nm-btn" data-close>Cancel</button><button class="nm-btn primary" data-act="ok">Record consumption</button>',
+        <p class="small muted">${take} bags leave ${esc(r.bayCode)}${loadsText ? `, from ${esc(loadsText)}` : ''}.</p>
+        <h4>The empty bags</h4>
+        <p class="small muted">Count the bags as you empty them. Good ones go back to the bag store as used bags; torn ones are thrown away and replaced with new bags.</p>
+        <div class="grid-2">
+          ${UI.field('Good, back to the bag store', UI.input('bagsGood', { type: 'number', min: 0, value: take }))}
+          ${UI.field('Torn or unusable', UI.input('bagsTorn', { type: 'number', min: 0, value: 0 }))}
+        </div>
+        <label class="check"><input type="checkbox" name="problem" /> Something was wrong with the biomass (stones, rot, wrong material, very wet): report it after saving</label>`,
+      footer: '<button class="nm-btn" data-close>Cancel</button><button class="nm-btn primary" data-act="ok">Save</button>',
       onMount(el, close) {
         const recalc = () => {
           const ws = ['w1', 'w2', 'w3'].map((n) => Number(el.querySelector(`[name=${n}]`).value)).filter((n) => n > 0);
@@ -732,37 +801,54 @@
         };
         ['w1', 'w2', 'w3'].forEach((n) => el.querySelector(`[name=${n}]`).addEventListener('input', recalc));
         recalc();
+        // torn bags typed in: the rest are good
+        const good = el.querySelector('[name=bagsGood]');
+        const torn = el.querySelector('[name=bagsTorn]');
+        torn.addEventListener('input', () => { good.value = Math.max(0, take - (Number(torn.value) || 0)); });
+        good.addEventListener('input', () => { torn.value = Math.max(0, take - (Number(good.value) || 0)); });
 
         el.querySelector('[data-act=ok]').addEventListener('click', () => {
           const ws = ['w1', 'w2', 'w3'].map((n) => Number(el.querySelector(`[name=${n}]`).value)).filter((n) => n > 0);
           if (!ws.length) return UI.toast('Enter at least one bag weight', 'warn');
           if (take < 1) return UI.toast(`${r.bayCode} is empty: there is nothing to issue`, 'danger');
+          const bagsGood = Math.round(Number(good.value) || 0);
+          const bagsTorn = Math.round(Number(torn.value) || 0);
+          if (bagsGood < 0 || bagsTorn < 0 || bagsGood + bagsTorn !== take) {
+            return UI.showErrors(el, [`Good (${bagsGood}) and torn (${bagsTorn}) must add up to the ${take} bags emptied`]);
+          }
+          const reportProblem = el.querySelector('[name=problem]').checked;
           const avg = D.round2(ws.reduce((a, b) => a + b, 0) / ws.length);
           const moisture = D.moistureFromWeight(avg, s);
           const now = new Date().toISOString();
           const consumed = bayBags.slice(0, take);
 
-          for (const b of consumed) {
-            Object.assign(b, { status: 'CONSUMED', consumedAt: now, usageId: r.id, updatedAt: now });
+          // Numbered bags among them go straight back to the bag store (good)
+          // or are retired (torn), keeping their serials.
+          const cleared = { supplierId: null, bayId: null, bayCode: null, deliveryId: null, bagIssueId: null };
+          consumed.forEach((b, i) => {
+            const ok = i < bagsGood;
+            Object.assign(b, cleared, {
+              status: ok ? 'IN_STOCK' : 'RETIRED', condition: ok ? 'USED' : 'TORN',
+              consumedAt: now, usageId: r.id, returnedAt: now, updatedAt: now,
+            });
             Store.markDirty('bags', b.id);
-          }
-          // The same bag record stays with its serial: the empty bag now waits
-          // under Bag returns to be checked and re-issued (req 14).
+          });
 
           Store.update('usageRequests', r.id, {
             status: 'CONSUMED', bags: take, requestedBags: r.bags, sampleBags: ws, avgBagKg: avg, moisturePct: moisture,
             totalKg: D.round2(avg * take), consumedAt: now, consumedBy: Auth.current().email,
-            bagSerials: consumed.map((b) => b.serial),
+            bagSerials: consumed.map((b) => b.serial), bagsGood, bagsTorn, fromLoads,
           }, 'usage-consume');
           // the three bags just weighed are the newest reading of what is left in the bay
           if (Store.byId('bays', r.bayId)) Store.update('bays', r.bayId, { lastWeighKg: avg, lastWeighAt: now, lastWeighBy: Auth.current().email }, 'bay-weigh');
 
-          VH.audit('usage.consume', 'usage', r.id, `${take} bags from ${r.bayCode} · avg ${avg} kg · moisture ${moisture}% · ${D.round2(avg * take)} kg`);
-          if (D.moistureBand(moisture, s) !== 'OK') {
-            UI.toast(`Moisture ${moisture}% is high. Consider raising a quality issue against this batch`, 'warn', 6500);
+          VH.audit('usage.consume', 'usage', r.id, `${take} bags from ${r.bayCode} · avg ${avg} kg · moisture ${moisture}% · ${D.round2(avg * take)} kg · empty bags: ${bagsGood} good, ${bagsTorn} torn`);
+          if (D.moistureBand(moisture, s) !== 'OK' && !reportProblem) {
+            UI.toast(`Moisture ${moisture}% is high. Consider reporting a quality problem for this issue`, 'warn', 6500);
           }
-          UI.toast(`${take} bags consumed, ${kg(D.round2(avg * take))} out`, 'ok');
+          UI.toast(`${take} bags consumed, ${kg(D.round2(avg * take))} out. ${bagsGood} empty bags back to the store${bagsTorn ? `, ${bagsTorn} torn` : ''}.`, 'ok', 5000);
           close(); App.refresh();
+          if (reportProblem) setTimeout(() => App.raiseQuality(null, { usageId: r.id }), 280);
         });
       },
     });

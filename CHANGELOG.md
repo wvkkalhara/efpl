@@ -3,6 +3,75 @@
 All notable changes to the EnerFab Biomass Storage system.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.8.0] — 2026-11-13
+
+### Added
+
+* **Help on every screen and window, hidden until asked for.** Every page has
+  a "What is this page?" button at the top, and every window has a "Help"
+  button in its title bar. Each opens a few short, plain sentences about what
+  the page is for and what to do; "Hide help" closes it. The sign-in and
+  "waiting for approval" screens have it too. The words live in
+  `js/help.js` and can be edited without touching anything else.
+
+### Changed
+
+* **Plain English throughout.** Harder words were replaced with everyday ones,
+  for example:
+  - Payments: "Waiting for the supervisor", "Approved, to send to Head
+    Office", "With Head Office"; buttons **Approve** and **Send to Head
+    Office**; "Not paid yet", "Price per bag", "Taken off", "To pay",
+    "How it is worked out".
+  - Receive biomass: "Truck full, gross" and "Truck empty, tare", "Biomass
+    weight, net", "Value of this load", "Lowest to highest", "Price: Use the
+    fill check result", "Bag numbers (only if the bags have them)".
+  - Accepting a truck: "Take money off", "Take off (%)", "Why".
+  - Gasifier (was "Gasifier issue"): "Which bay to use", **Ask for bags**,
+    **Weigh and feed**, "What went to the gasifier".
+  - Quality problems: "How serious" (Small, Medium, Serious), "What will be
+    done about it", "Supplier has been told", "Close the problem"; Open /
+    Closed instead of OPEN / RESOLVED.
+  - Suppliers show Active / Not active instead of ACTIVE; "Activity log"
+    instead of "Audit trail"; "Load a backup" instead of "Import (merge)".
+  - Simpler role descriptions and job names in Users & roles.
+* The dashboard's "Empty bags in the store" now comes from the bag store
+  (used + new), and the Bag registry shows numbered bags thrown away instead
+  of the old "awaiting check" figure.
+
+## [1.7.0] — 2026-11-13
+
+### Added
+
+* **Bag store with new and used bags** (the menu item that was "Bag
+  returns"). It works by count, so bags do not need serial numbers.
+  - Two shelves: **used bags** (back from the gasifier and still good) and
+    **new bags** (bought in).
+  - **Issue bags to a supplier:** taken from the used shelf first, topped up
+    with new bags. The split is filled in and can be changed; more than is on
+    a shelf is refused. The allocation slip shows used and new.
+  - **At the gasifier**, the operator counts the emptied bags: good ones go
+    back to the used shelf, torn ones are thrown away.
+  - **Receive new bags**, **Record torn bags** (found in the store), and
+    **Count the store** (a stock-take that sets the figures to what is on the
+    shelves and keeps the difference in the history).
+  - **Bags with suppliers:** for each supplier, bags given, bags brought back
+    full, and how many they are holding now.
+  - "Where every bag is": used and new in the store, with suppliers, full in
+    the bays. A movements list shows every change and who made it.
+  - The dashboard says when new bags run low (the level is in Business
+    settings, 500 to start) and, the first time, asks for the opening count.
+* **Report a problem found at the gasifier without a bag serial.** The
+  gasifier issue remembers which load(s) its bags came from (oldest in the
+  bay first), so a problem is traced to the right supplier. Tick the box when
+  weighing, or choose the gasifier issue on the Quality screen.
+
+### Changed
+
+* Numbered bags emptied at the gasifier go straight back to the store (or
+  are retired if torn) instead of waiting for a separate check.
+* The training's bag mission now teaches the bag store, and the gasifier
+  mission the counting of empty bags.
+
 ## [1.6.1] — 2026-11-13
 
 A full check of every screen for every role, every print and every main

@@ -46,6 +46,7 @@
     star: '<path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3 6.4 20.2l1.1-6.2L3 9.6l6.2-.9L12 3Z"/>',
     check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
     lock: '<rect x="5" y="11" width="14" height="10" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+    help: '<circle cx="12" cy="12" r="9"/><path d="M9.6 9.3a2.5 2.5 0 0 1 4.9.7c0 1.7-2.5 2.2-2.5 3.8"/><path d="M12 17v.01"/>',
   };
   const icon = (name, cls = '') =>
     `<svg class="ico ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ''}</svg>`;
@@ -102,8 +103,38 @@
   /** Close every open dialog (used when the page changes). */
   function closeAllLayers() { layers.slice().reverse().forEach((l) => l.close(true)); }
 
+  /* ------------------------------- help ------------------------------
+     Every screen and dialog has a short description in plain words
+     (js/help.js). It is hidden until someone presses "What is this?", and
+     the words are only put on the page while it is open. */
+  function helpFor(kind, key) {
+    try { return window.EFPL_HELP && window.EFPL_HELP[kind] ? window.EFPL_HELP[kind](key) : null; } catch { return null; }
+  }
+  const helpButton = (label) => `<button type="button" class="help-toggle" aria-expanded="false" data-label="${attr(label)}">${icon('help')}<span>${esc(label)}</span></button>`;
+  function wireHelp(btn, panel, html) {
+    if (!btn || !panel) return;
+    btn.addEventListener('click', () => {
+      const opening = panel.hidden;
+      panel.innerHTML = opening ? `<div class="help-inner">${html}</div>` : '';
+      panel.hidden = !opening;
+      btn.setAttribute('aria-expanded', String(opening));
+      btn.classList.toggle('on', opening);
+      btn.querySelector('span').textContent = opening ? 'Hide help' : btn.dataset.label;
+    });
+  }
+  /** Put the "What is this page?" button and its hidden help at the top of a screen. */
+  function helpBar(view, html) {
+    if (!view || !html) return;
+    const bar = document.createElement('div');
+    bar.className = 'help-bar';
+    bar.innerHTML = `${helpButton('What is this page?')}<div class="help-panel" hidden></div>`;
+    view.insertBefore(bar, view.firstChild);
+    wireHelp(bar.querySelector('.help-toggle'), bar.querySelector('.help-panel'), html);
+  }
+
   /* ------------------------------ modal ------------------------------ */
-  function modal({ title, body, footer, size = 'md', onMount, dismissible = true }) {
+  function modal({ title, body, footer, size = 'md', onMount, dismissible = true, help }) {
+    const helpHtml = help === false ? null : (help || helpFor('dialog', title));
     const backdrop = document.createElement('div');
     backdrop.className = `modal-backdrop${size === 'sheet' ? ' is-sheet' : ''}`;
     backdrop.innerHTML = `
@@ -111,11 +142,13 @@
         <div class="sheet-grabber" aria-hidden="true"></div>
         <header class="modal-head">
           <h2>${esc(title)}</h2>
+          ${helpHtml ? helpButton('Help') : ''}
           ${dismissible ? `<button class="icon-btn" data-close aria-label="Close">${icon('x')}</button>` : ''}
         </header>
-        <div class="modal-body">${body || ''}</div>
+        <div class="modal-body">${helpHtml ? '<div class="help-panel" hidden></div>' : ''}${body || ''}</div>
         ${footer ? `<footer class="modal-foot">${footer}</footer>` : ''}
       </div>`;
+    if (helpHtml) wireHelp(backdrop.querySelector('.help-toggle'), backdrop.querySelector('.modal-body > .help-panel'), helpHtml);
     document.body.appendChild(backdrop);
     document.documentElement.classList.add('has-modal');
     requestAnimationFrame(() => backdrop.classList.add('open'));
@@ -142,7 +175,7 @@
     });
 
     if (onMount) onMount(backdrop, close);
-    const first = backdrop.querySelector('input, select, textarea, button');
+    const first = backdrop.querySelector('input, select, textarea, button:not(.help-toggle)');
     if (first) setTimeout(() => first.focus(), 60);
     return { el: backdrop, close };
   }
@@ -342,7 +375,7 @@
   }
 
   window.UI = {
-    esc, attr, $, $$, icon, whenSettled, isSettling, closeAllLayers, pushLayer, dropLayer, toast, modal, confirm, badge, statusTone, stat, table, empty,
+    esc, attr, $, $$, icon, whenSettled, isSettling, closeAllLayers, helpBar, helpFor, pushLayer, dropLayer, toast, modal, confirm, badge, statusTone, stat, table, empty,
     field, input, select, textarea, money, kg, dt, dOnly, formData, showErrors,
     download, toCSV, print, debounce,
   };

@@ -21,13 +21,13 @@
       { id: 'intake', label: 'Receive biomass', short: 'Receive', icon: 'truckIn', see: ['delivery.create'] },
       { id: 'deliveries', label: 'Deliveries', short: 'Deliveries', icon: 'list', see: ['delivery.create', 'delivery.accept', 'payment.split', 'payment.release', 'audit.read'] },
       { id: 'bays', label: 'Bays & stock', short: 'Stock', icon: 'warehouse', see: ['bay.allocate', 'usage.request', 'audit.read'] },
-      { id: 'gasifier', label: 'Gasifier issue', short: 'Gasifier', icon: 'flame', see: ['usage.request', 'usage.approve', 'usage.consume', 'audit.read'] },
+      { id: 'gasifier', label: 'Gasifier', short: 'Gasifier', icon: 'flame', see: ['usage.request', 'usage.approve', 'usage.consume', 'audit.read'] },
     ] },
     { group: 'Traceability', items: [
       { id: 'bags', label: 'Bag registry', short: 'Bags', icon: 'tag', see: ['bag.generate', 'bag.issue', 'audit.read'] },
       { id: 'trace', label: 'Trace a bag', short: 'Trace', icon: 'search', see: ['quality.report', 'audit.read'] },
-      { id: 'quality', label: 'Quality issues', short: 'Quality', icon: 'alert', see: ['quality.report', 'quality.resolve', 'audit.read'] },
-      { id: 'returns', label: 'Bag returns', short: 'Returns', icon: 'returns', see: ['returns.write', 'audit.read'] },
+      { id: 'quality', label: 'Quality problems', short: 'Quality', icon: 'alert', see: ['quality.report', 'quality.resolve', 'audit.read'] },
+      { id: 'returns', label: 'Bag store', short: 'Bag store', icon: 'returns', see: ['returns.write', 'bag.issue', 'audit.read'] },
     ] },
     { group: 'Money', items: [
       { id: 'payments', label: 'Payments', short: 'Payments', icon: 'wallet', see: ['payment.split', 'payment.approve', 'payment.release', 'payment.pay', 'audit.read'] },
@@ -223,10 +223,18 @@
         return;
       }
 
-      if (!user) { root.innerHTML = this.loginScreen(); this.wireLogin(root); return; }
+      if (!user) {
+        root.innerHTML = this.loginScreen(); this.wireLogin(root);
+        UI.helpBar(root.querySelector('.auth-card'), UI.helpFor('screen', 'login'));
+        return;
+      }
 
       // 2. Signed in but the owner has not assigned a role yet.
-      if (Auth.isPending(user)) { root.innerHTML = this.pendingScreen(); this.wirePending(root); return; }
+      if (Auth.isPending(user)) {
+        root.innerHTML = this.pendingScreen(); this.wirePending(root);
+        UI.helpBar(root.querySelector('.auth-card'), UI.helpFor('screen', 'pending'));
+        return;
+      }
 
       root.innerHTML = this.shell();
       this.paintChrome();
@@ -363,6 +371,8 @@
       view.classList.add('view-enter');
       try {
         def.render(view, this);
+        // a short description of this page, hidden until asked for (js/help.js)
+        UI.helpBar(view, def.help || UI.helpFor('screen', this.route));
         const after = this._afterMount; this._afterMount = null;
         if (after) setTimeout(after, 0);
       } catch (err) {

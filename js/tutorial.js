@@ -157,7 +157,7 @@
       steps: () => {
         const truck = waitingTruck();
         const s = [
-          { title: 'Trucks waiting for you', route: 'deliveries', target: '.toolbar .seg', text: '<b>Awaiting acceptance</b> lists the trucks the gate has registered. The number shows how many are waiting.' },
+          { title: 'Trucks waiting for you', route: 'deliveries', target: '.toolbar .seg', text: '<b>Waiting to be accepted</b> lists the trucks the gate has entered. The number shows how many are waiting.' },
           { title: 'Every delivery', route: 'deliveries', target: '#delivery-table', text: '{Tap} any delivery to open it: its fill check, moisture, bays, payment, and the buttons to print the <b>receipt</b>, the <b>invoice</b> and the <b>bag labels</b>. Every print carries the EnerFab logo.' },
         ];
         if (truck) {
@@ -200,24 +200,27 @@
       blurb: 'Ask for biomass, approve the driest bay, weigh three bags.',
       when: () => sees('gasifier'),
       steps: () => [
-        { title: 'Open Gasifier issue', route: 'dashboard', target: navTarget('gasifier'), tap: true, next: 'gasifier', text: () => (navTarget('gasifier')() && navTarget('gasifier')().id === 'more-btn' ? '<b>Gasifier issue</b> is under <b>More</b>.' : '{Tap} <b>Gasifier issue</b>.') },
+        { title: 'Open Gasifier', route: 'dashboard', target: navTarget('gasifier'), tap: true, next: 'gasifier', text: () => (navTarget('gasifier')() && navTarget('gasifier')().id === 'more-btn' ? '<b>Gasifier</b> is under <b>More</b>.' : '{Tap} <b>Gasifier</b>.') },
         { title: 'Driest bays first', route: 'gasifier', target: '#view .bay-grid', text: 'Bays with stock, <b>driest first</b>, with today\'s bag weight and moisture. Red ones are dry: use them first.' },
-        { title: 'Ask for biomass', route: 'gasifier', when: () => can('usage.request'), target: '#new-usage', text: '<b>New issue request</b> asks for a number of bags from a bay. It then waits for the supervisor.' },
+        { title: 'Ask for biomass', route: 'gasifier', when: () => can('usage.request'), target: '#new-usage', text: '<b>Ask for bags</b> asks for a number of bags from a bay. It then waits for the supervisor.' },
         { title: 'Approve', route: 'gasifier', when: () => can('usage.approve'), text: 'As supervisor you see each request under <b>Open requests</b>. <b>Approve and choose bay</b>: the driest bay is offered first, and you can weigh a bag to confirm.' },
-        { title: 'Weigh and consume', route: 'gasifier', when: () => can('usage.consume'), text: 'When a request is approved, press <b>Weigh and consume</b>: weigh <b>three bags</b>. The average gives the weight going in and the moisture, and the bags leave the bay.' },
-        { title: 'Issue history', route: 'gasifier', target: () => [...document.querySelectorAll('#view h3')].find((h) => /Issue history/.test(h.textContent)), text: 'Everything that went to the gasifier: bay, bags, average weight, moisture and who did it.' },
+        { title: 'Weigh and feed', route: 'gasifier', when: () => can('usage.consume'), text: 'When a request is approved, press <b>Weigh and feed</b>: weigh <b>three bags</b>. The average gives the weight going in and the moisture, and the bags leave the bay.' },
+        { title: 'The empty bags', route: 'gasifier', when: () => can('usage.consume'), text: 'In the same window, count the empty bags: <b>good</b> ones go back to the bag store as used bags, <b>torn</b> ones are thrown away. Something wrong with the biomass (stones, rot, very wet)? Tick the box and report it: the app knows which load the bags came from, even without serials.' },
+        { title: 'What went to the gasifier', route: 'gasifier', target: () => [...document.querySelectorAll('#view h3')].find((h) => /What went to the gasifier/.test(h.textContent)), text: 'Everything that went to the gasifier: bay, bags, average weight, moisture and who did it.' },
       ],
     },
     {
       id: 'bags', title: 'Bags and labels', badge: 'Tag master', icon: 'tag',
-      blurb: 'Number new bags, print labels, issue rounds, check returns.',
+      blurb: 'The bag store: used bags first, new bags to top up, torn bags out.',
       when: () => sees('bags') || sees('returns'),
       steps: () => [
-        { title: 'The bag registry', route: 'bags', when: () => sees('bags'), target: '#bag-search', text: 'Every bag has one serial number. Search a serial or a supplier to find where a bag is.' },
-        { title: 'Number new bags', route: 'bags', when: () => sees('bags') && can('bag.generate'), target: '#gen-bags', text: 'Create a run of new serials and print the labels. The supplier number is written by hand on the label, so a bag can go to a different supplier next round.' },
-        { title: 'Issue a round', route: 'bags', when: () => sees('bags') && can('bag.issue'), target: '#issue-bags', text: 'Give empty bags to a supplier for the next round and print the allocation slip.' },
-        { title: 'Every bag', route: 'bags', when: () => sees('bags'), target: '#bag-table', text: 'Each bag\'s status: in the store, with a supplier, in a bay, used, or damaged.' },
-        { title: 'Returned bags', route: 'returns', when: () => sees('returns') && can('returns.write'), target: '#new-return', text: 'Check returned bags: good ones go back to the store, damaged ones to repair or replacement.' },
+        { title: 'The bag store', route: 'returns', when: () => sees('returns'), target: '#view .stats', text: 'Empty bags are kept on two shelves: <b>used</b> (back from the gasifier and still good) and <b>new</b>. You also see how many bags each supplier is holding, and how many were thrown away.' },
+        { title: 'Issue bags to a supplier', route: 'returns', when: () => sees('returns') && can('bag.issue'), target: '#bs-issue', text: 'Bags go out from the <b>used</b> shelf first; new bags make up the rest. The split is filled in for you and can be changed. A slip is printed for the supplier.' },
+        { title: 'New bags and torn bags', route: 'returns', when: () => sees('returns') && can('returns.write'), target: '#bs-new', text: '<b>Receive new bags</b> when a delivery of bags arrives. <b>Record torn bags</b> found in the store. When new bags run low, the dashboard tells you to order more.' },
+        { title: 'Count the store', route: 'returns', when: () => sees('returns') && can('returns.write'), target: '#bs-count', text: 'Count the shelves now and then and type the numbers: the app puts its figures right and keeps the difference in the movements.' },
+        { title: 'Serial numbers (optional)', route: 'bags', when: () => sees('bags'), target: '#bag-search', text: 'If you label bags with serial numbers, the Bag registry finds any bag. The bag store works by counts, so serials are not needed.' },
+        { title: 'Number and label bags', route: 'bags', when: () => sees('bags') && can('bag.generate'), target: '#gen-bags', text: 'Create a run of new serials and print the labels. The supplier number is written by hand on the label, so a bag can go to a different supplier next round.' },
+        { title: 'Every numbered bag', route: 'bags', when: () => sees('bags'), target: '#bag-table', text: 'If you use serial numbers, each bag\'s status is here: in the store, with a supplier, in a bay, or thrown away.' },
       ],
     },
     {
@@ -237,7 +240,7 @@
       steps: () => [
         { title: 'Open Payments', route: 'dashboard', target: navTarget('payments'), tap: true, next: 'payments', text: () => (navTarget('payments')() && navTarget('payments')().id === 'more-btn' ? '<b>Payments</b> is under <b>More</b>.' : '{Tap} <b>Payments</b>.') },
         { title: 'Money at a glance', route: 'payments', target: '#view .stats', text: 'What is in the pipeline, waiting for authorisation, with Head Office, and paid to date.' },
-        { title: 'The stages', route: 'payments', target: '#view .toolbar .seg', text: 'A payment is made when a load is accepted, then: <b>Awaiting authorisation</b> → <b>Authorised</b> → <b>Sent to H.O.</b> → <b>Paid</b>.' },
+        { title: 'The stages', route: 'payments', target: '#view .toolbar .seg', text: 'A payment is made when a truck is accepted, then: <b>Waiting for supervisor</b> → <b>Approved</b> → <b>With Head Office</b> → <b>Paid</b>.' },
         { title: 'Your part', route: 'payments', target: '#payment-table', text: () => {
           const jobs = [];
           if (can('payment.approve')) jobs.push('<b>authorise</b> payments and change deductions');

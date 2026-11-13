@@ -32,7 +32,7 @@ vc.on('error', (...a) => console.error('page error:', ...a));
 const SCRIPTS = [
   'js/config.js', 'js/store.js', 'js/domain.js', 'js/firebase.js', 'js/auth.js',
   'js/sync.js', 'js/ui.js', 'js/seed.js', 'js/app.js',
-  'js/views-core.js', 'js/views-stock.js', 'js/views-money.js', 'js/tutorial.js',
+  'js/views-core.js', 'js/views-stock.js', 'js/views-money.js', 'js/tutorial.js', 'js/help.js',
 ];
 
 const pageHtml = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8')
@@ -231,18 +231,21 @@ function run() {
     const t = Domain.traceBag(Store, 'EFPL-BG-000302');
     return t && t.supplier && t.delivery && t.delivery.receiptNo === 'RC-2026-0002';
   });
-  check('a consumed bag also shows the gasifier run', () => {
-    const t = Domain.traceBag(Store, 'EFPL-BG-000045');
-    return t && t.bag.status === 'CONSUMED' && t.usage && t.usage.avgBagKg > 0;
+  check('a bag emptied at the gasifier shows the run, and is back in the store (or thrown away if torn)', () => {
+    const good = Domain.traceBag(Store, 'EFPL-BG-000043');
+    const torn = Domain.traceBag(Store, 'EFPL-BG-000045');
+    return good && good.usage && good.usage.avgBagKg > 0 && good.bag.status === 'IN_STOCK'
+      && torn && torn.bag.status === 'RETIRED';
   });
   check('unknown serial returns null (no invented record)', () => Domain.traceBag(Store, 'EFPL-BG-999999') === null);
 
   results.push('\nBAY STOCK (requirement 4)');
-  check('bay 1 holds exactly the bags allocated to it (stored + drawn)', () => {
-    const inBay = Store.all('bags').filter((b) => b.bayCode === 'BAY-1' && ['STORED', 'CONSUMED'].includes(b.status)).length;
+  check('bay 1 holds what was allocated to it, less what went to the gasifier', () => {
+    const bay = Store.all('bays').find((b) => b.code === 'BAY-1');
     const delivery = Store.all('deliveries').find((d) => d.receiptNo === 'RC-2026-0001');
     const allocated = delivery.allocations.find((a) => a.bayCode === 'BAY-1').bags;
-    return inBay === allocated;
+    const drawn = Store.all('usageRequests').filter((u) => u.bayId === bay.id && u.status === 'CONSUMED').reduce((a, u) => a + u.bags, 0);
+    return window.VH.bagsInBay(bay.id) === allocated - drawn && allocated - drawn === 75;
   });
   check('allocations add up to the bag count', () => {
     const d = Store.all('deliveries').find((x) => x.receiptNo === 'RC-2026-0001');
@@ -344,19 +347,26 @@ function run() {
   window.document.querySelector('[data-act=ok]').click();
   check('request moves to APPROVED', () => Store.byId('usageRequests', useReq.id).status === 'APPROVED');
   closeModals();
+  const storeBefore = window.VH.bagStore();
+  const bayBefore = window.VH.bagsInBay(Store.byId('usageRequests', useReq.id).bayId);
   App.consumeUsage(useReq.id);
   ['w1', 'w2', 'w3'].forEach((n, i) => {
     const el = window.document.querySelector(`[name=${n}]`);
     if (el) { el.value = String(22 + i * 0.5); el.dispatchEvent(new window.Event('input', { bubbles: true })); }
   });
+  const tornBox = window.document.querySelector('.modal [name=bagsTorn]');
+  tornBox.value = '3'; tornBox.dispatchEvent(new window.Event('input', { bubbles: true }));
   window.document.querySelector('[data-act=ok]').click();
   const after = Store.byId('usageRequests', useReq.id);
   check('consumption records the three-bag average', () => after.status === 'CONSUMED' && after.avgBagKg > 22 && after.avgBagKg < 23);
   check('outgoing weight = average x bags', () => after.totalKg === Math.round(after.avgBagKg * after.bags * 100) / 100);
-  check('consumed bags leave the bay', () => {
-    const used = Store.all('bags').filter((b) => b.usageId === useReq.id);
-    return used.length === after.bags && used.every((b) => b.status === 'CONSUMED');
+  check('consumed bags leave the bay', () => window.VH.bagsInBay(after.bayId) === bayBefore - after.bags);
+  check('the emptied bags are sorted: good ones to the used shelf, torn ones thrown away', () => {
+    const st = window.VH.bagStore();
+    return after.bagsTorn === 3 && after.bagsGood === after.bags - 3
+      && st.used === storeBefore.used + after.bagsGood && st.discarded === storeBefore.discarded + 3;
   });
+  check('the gasifier issue remembers which load its bags came from', () => (after.fromLoads || []).length > 0 && after.fromLoads.reduce((a, l) => a + l.bags, 0) === after.bags);
   check('staff actions are logged with who did them', () => {
     const a = Store.all('audit').filter((x) => x.action === 'usage.consume').pop();
     return a && a.by === 'kasun.perera@efpl.org' && a.entityId === useReq.id
@@ -698,7 +708,7 @@ function run() {
   check('the payment history is in plain words, not codes', () => {
     const p = Store.all('payments').find((x) => (x.history || []).some((h) => h.action === 'SENT_TO_HEAD_OFFICE'));
     const html = printed(() => App.printPaymentSlip(p.id));
-    return /Released to Head Office/.test(html) && !/SENT_TO_HEAD_OFFICE|>CREATED<|>APPROVED</.test(html);
+    return /Sent to Head Office/.test(html) && !/SENT_TO_HEAD_OFFICE|>CREATED<|>APPROVED</.test(html);
   });
   check('the invoice and the receipt carry the supplier\'s bank details', () => {
     const inv = printed(() => App.printInvoice(accepted.id));
@@ -752,6 +762,140 @@ function run() {
     App.navigate('dashboard');
     const total = Store.all('bays').reduce((a, b) => a + window.VH.bagsInBay(b.id), 0);
     return window.document.querySelector('.hero-yard-value').textContent.replace(/\D/g, '') === String(total);
+  });
+  /* ---------------- help on every screen and window ---------------- */
+  check('every screen has a "What is this page?" button, with the help hidden until pressed', () => {
+    const missing = [];
+    for (const id of App.visibleScreens()) {
+      closeModals();
+      App.navigate(id);
+      const view = window.document.getElementById('view');
+      const btn = view.querySelector('.help-bar .help-toggle');
+      const panel = view.querySelector('.help-bar .help-panel');
+      if (!btn || !panel || !panel.hidden || panel.textContent.trim()) { missing.push(id); continue; }
+      btn.click();
+      const shown = !panel.hidden && panel.textContent.trim().length > 20 && btn.textContent.includes('Hide help');
+      btn.click();
+      if (!shown || !panel.hidden || panel.textContent.trim()) missing.push(id + ' (toggle)');
+    }
+    if (missing.length) throw new Error('no help on: ' + missing.join(', '));
+    return true;
+  });
+  check('every main window has a Help button, hidden until pressed', () => {
+    const D0 = Store.all('deliveries');
+    const opens = [
+      () => App.openDelivery(D0[0].id), () => App.openPayment(Store.all('payments')[0].id),
+      () => App.openSupplier(Store.all('suppliers')[0].id), () => App.editSupplier(Store.all('suppliers')[0].id),
+      () => App.openBay(Store.all('bays')[0].id), () => App.bayHistory(Store.all('bays')[0].id), () => App.editBay(Store.all('bays')[0].id),
+      () => App.requestUsage(null), () => App.raiseQuality(null), () => App.issueBags(), () => App.generateBags(),
+      () => App.printBagLabels(), () => App.receiveNewBags(), () => App.discardBags(), () => App.countBagStore(),
+      () => App.accountDialog(), () => window.VH.addTypeDialog(() => {}),
+    ];
+    const missing = [];
+    opens.forEach((open, i) => {
+      closeModals();
+      open();
+      const m = [...window.document.querySelectorAll('.modal')].pop();
+      const btn = m && m.querySelector('.modal-head .help-toggle');
+      const panel = m && m.querySelector('.modal-body > .help-panel');
+      if (!btn || !panel || !panel.hidden) { missing.push(`${i}: ${m ? m.querySelector('h2').textContent : 'no window'}`); return; }
+      btn.click();
+      if (panel.hidden || panel.textContent.trim().length < 10) missing.push(`${i} (toggle)`);
+    });
+    closeModals();
+    if (missing.length) throw new Error('no help on: ' + missing.join(', '));
+    return true;
+  });
+
+  /* ---------------- bag store: new and used bags ---------------- */
+  const shelf = () => window.VH.bagStore();
+  check('bag store: issuing gives used bags first, then new', () => {
+    const before = shelf();
+    const sup = Store.all('suppliers')[2];
+    const holdBefore = (window.VH.supplierBags().find((x) => x.supplierId === sup.id) || { holding: 0 }).holding;
+    closeModals();
+    App.issueBags(sup.id);
+    const m = [...window.document.querySelectorAll('.modal')].pop();
+    const want = before.used + 10;
+    const qty = m.querySelector('[name=qty]'); qty.value = String(want); qty.dispatchEvent(new window.Event('input', { bubbles: true }));
+    const suggestedUsed = Number(m.querySelector('[name=usedQty]').value);
+    const suggestedNew = Number(m.querySelector('[name=newQty]').value);
+    const cb = m.querySelector('[name=withSerials]'); if (cb) cb.checked = false;
+    const html = printed(() => m.querySelector('[data-act=issue]').click());
+    closeModals();
+    const after = shelf();
+    const hold = window.VH.supplierBags().find((x) => x.supplierId === sup.id).holding;
+    return suggestedUsed === before.used && suggestedNew === 10 && after.used === 0 && after.new === before.new - 10
+      && hold === holdBefore + want && /Used bags/.test(html) && /New bags/.test(html);
+  });
+  check('bag store: cannot give out more used bags than are in the store', () => {
+    closeModals();
+    App.issueBags(Store.all('suppliers')[2].id);
+    const m = [...window.document.querySelectorAll('.modal')].pop();
+    const set = (n, v) => { const e = m.querySelector(`[name=${n}]`); e.value = String(v); e.dispatchEvent(new window.Event('input', { bubbles: true })); };
+    const issuesBefore = Store.all('bagIssues').length;
+    set('qty', 50); set('usedQty', 50); set('newQty', 0);
+    m.querySelector('[data-act=issue]').click();
+    const refused = Store.all('bagIssues').length === issuesBefore && /Only 0 used bags/.test(m.textContent);
+    closeModals();
+    return refused;
+  });
+  check('bag store: new bags received go on the new shelf', () => {
+    const before = shelf().new;
+    closeModals();
+    App.receiveNewBags();
+    const m = [...window.document.querySelectorAll('.modal')].pop();
+    m.querySelector('[name=newQty]').value = '200';
+    m.querySelector('[data-act=save]').click();
+    closeModals();
+    return shelf().new === before + 200;
+  });
+  check('bag store: torn bags found in the store are thrown away', () => {
+    const before = shelf();
+    closeModals();
+    App.discardBags();
+    const m = [...window.document.querySelectorAll('.modal')].pop();
+    m.querySelector('[name=shelf]').value = 'NEW';
+    m.querySelector('[name=qty]').value = '5';
+    m.querySelector('[data-act=save]').click();
+    closeModals();
+    const after = shelf();
+    return after.new === before.new - 5 && after.discarded === before.discarded + 5;
+  });
+  check('bag store: a count sets the shelves to what is really there', () => {
+    closeModals();
+    App.countBagStore();
+    const m = [...window.document.querySelectorAll('.modal')].pop();
+    m.querySelector('[name=usedCounted]').value = '40';
+    m.querySelector('[name=newCounted]').value = '450';
+    m.querySelector('[data-act=save]').click();
+    closeModals();
+    const st = shelf();
+    return st.used === 40 && st.new === 450 && st.moves[0].kind === 'COUNT';
+  });
+  check('bag store: few new bags left shows a warning on the dashboard', () => {
+    App.navigate('dashboard');
+    const low = shelf().low && /new bags left in the store: order more/.test(window.document.querySelector('.tasks').textContent);
+    return low;
+  });
+  check('bag store screen opens with the supplier balances and movements', () => {
+    App.navigate('returns');
+    const t = window.document.getElementById('view').textContent;
+    return /Bag store/.test(window.document.title) && /Bags with suppliers/.test(t) && /Movements/.test(t) && /Store counted/.test(t);
+  });
+  check('a problem found at the gasifier can be reported without a serial, and reaches the supplier', () => {
+    const u = Store.all('usageRequests').filter((x) => x.status === 'CONSUMED' && (x.fromLoads || []).length).pop();
+    const before = Store.all('qualityIssues').length;
+    closeModals();
+    App.raiseQuality(null, { usageId: u.id });
+    const m = [...window.document.querySelectorAll('.modal')].pop();
+    m.querySelector('[name=description]').value = 'Stones in the bags';
+    m.querySelector('[data-act=save]').click();
+    closeModals();
+    const q = Store.all('qualityIssues')[Store.all('qualityIssues').length - 1];
+    const load = Store.byId('deliveries', u.fromLoads[0].deliveryId);
+    return Store.all('qualityIssues').length === before + 1 && q.usageId === u.id && q.deliveryId === load.id
+      && q.supplierId === load.supplierId && !q.bagSerial;
   });
   check('a half-entered load survives printing and a page reload, on the step it was on', () => {
     App.navigate('intake');

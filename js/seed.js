@@ -160,9 +160,17 @@
     }
 
     /* ------------------- bag rounds and where the bags are ----------- */
+    // The bag store was counted three weeks ago; rounds since then are split
+    // between used bags (given first) and new ones.
+    Store.add('bagReturns', {
+      kind: 'COUNT', returnNo: 'BS-0001', usedCounted: 300, newCounted: 1500, usedDelta: 300, newDelta: 1500,
+      note: 'Opening count of the bag store', at: ago(20, 8), returnedAt: ago(20, 8), recordedBy: 'chaminda.raj@efpl.org', demo: true,
+    }, 'seed');
+    const split = { 1: [300, 0], 2: [0, 180], 3: [0, 240], 4: [0, 160] };
     const round = (roundNo, supplier, from, to, daysAgo, delivery) => {
       const issue = Store.add('bagIssues', {
         roundNo, supplierId: supplier.id, qty: to - from + 1, mode: 'SERIAL_ONLY',
+        usedQty: split[roundNo][0], newQty: split[roundNo][1],
         serials: D.serialRange(PREFIX, from, to), issuedAt: ago(daysAgo, 8),
         issuedBy: 'chaminda.raj@efpl.org', sharedWith: 'Printed allocation slip', demo: true,
       }, 'seed');
@@ -219,7 +227,7 @@
 
     // Keep the running numbers ahead of the sample records.
     Object.assign(Store.data.counters, {
-      receipt: 6, payment: 5, usage: 4, quality: 3, bagReturn: 2, supplier: SUPPLIERS.length + 1,
+      receipt: 6, payment: 5, usage: 4, quality: 3, bagReturn: 4, supplier: SUPPLIERS.length + 1,
     });
 
     /* ------------------------ gasifier usage ------------------------- */
@@ -229,9 +237,11 @@
       approvedBy: 'nimal.silva@efpl.org', approvedAt: ago(2, 7), approvedNote: 'Test bag 19.2 kg, the driest bay. Use this one first.',
       sampleBags: [19.4, 18.9, 19.0], avgBagKg: 19.1, moisturePct: D.moistureFromWeight(19.1, settings),
       totalKg: 859.5, consumedAt: ago(2, 9), consumedBy: 'sunil.ops@efpl.org',
-      bagSerials: D.serialRange(PREFIX, 1, 45), demo: true,
+      bagSerials: D.serialRange(PREFIX, 1, 45), bagsGood: 43, bagsTorn: 2,
+      fromLoads: [{ deliveryId: d1.id, receiptNo: d1.receiptNo, supplierId: suppliers[0].id, bags: 45 }], demo: true,
     }, 'seed');
-    assignRange(1, 45, { status: 'CONSUMED', consumedAt: ago(2, 9), usageId: u1.id });
+    assignRange(1, 43, { status: 'IN_STOCK', condition: 'USED', consumedAt: ago(2, 9), usageId: u1.id, supplierId: null, bayId: null, bayCode: null, deliveryId: null });
+    assignRange(44, 45, { status: 'RETIRED', condition: 'TORN', consumedAt: ago(2, 9), usageId: u1.id, supplierId: null, bayId: null, bayCode: null, deliveryId: null });
     Object.assign(bays[0], { lastWeighKg: 19.1, lastWeighAt: ago(2, 9) });
 
     const u2 = Store.add('usageRequests', {
@@ -240,9 +250,11 @@
       approvedBy: 'nimal.silva@efpl.org', approvedAt: ago(1, 7), approvedNote: 'Still damp: mix one bag to two with Bay 1.',
       sampleBags: [20.8, 21.2, 20.5], avgBagKg: 20.83, moisturePct: D.moistureFromWeight(20.83, settings),
       totalKg: 624.9, consumedAt: ago(1, 9), consumedBy: 'sunil.ops@efpl.org',
-      bagSerials: D.serialRange(PREFIX, 301, 330), demo: true,
+      bagSerials: D.serialRange(PREFIX, 301, 330), bagsGood: 29, bagsTorn: 1,
+      fromLoads: [{ deliveryId: d2.id, receiptNo: d2.receiptNo, supplierId: suppliers[1].id, bags: 30 }], demo: true,
     }, 'seed');
-    assignRange(301, 330, { status: 'CONSUMED', consumedAt: ago(1, 9), usageId: u2.id });
+    assignRange(301, 329, { status: 'IN_STOCK', condition: 'USED', consumedAt: ago(1, 9), usageId: u2.id, supplierId: null, bayId: null, bayCode: null, deliveryId: null });
+    assignRange(330, 330, { status: 'RETIRED', condition: 'TORN', consumedAt: ago(1, 9), usageId: u2.id, supplierId: null, bayId: null, bayCode: null, deliveryId: null });
     Object.assign(bays[3], { lastWeighKg: 20.83, lastWeighAt: ago(1, 9) });
 
     Store.add('usageRequests', {
@@ -273,13 +285,14 @@
       resolvedAt: ago(5, 9), resolvedBy: 'nimal.silva@efpl.org', demo: true,
     }, 'seed');
 
-    /* --------------------------- bag returns ------------------------- */
+    /* ---------------------------- bag store -------------------------- */
     Store.add('bagReturns', {
-      returnNo: 'BR-0001', returnedBags: 60, good: 51, repairable: 6, replaced: 3, lost: 0,
-      returnedAt: ago(1, 17), recordedBy: 'chaminda.raj@efpl.org',
-      repairOrderRaised: true, replacementOrderQty: 50, replacementOrderedAt: ago(1, 18),
-      note: 'Stitching repaired in-house; 50 replacement bags ordered.',
-      demo: true,
+      kind: 'PURCHASE', returnNo: 'BS-0002', newQty: 500, vendor: 'Lanka Woven Sacks, invoice 4471',
+      at: ago(3, 10), returnedAt: ago(3, 10), recordedBy: 'chaminda.raj@efpl.org', demo: true,
+    }, 'seed');
+    Store.add('bagReturns', {
+      kind: 'DISCARD', returnNo: 'BS-0003', shelf: 'USED', qty: 12, reason: 'Rats: chewed in the corner stack',
+      at: ago(1, 17), returnedAt: ago(1, 17), recordedBy: 'chaminda.raj@efpl.org', demo: true,
     }, 'seed');
 
     /* ------------------------------ audit ---------------------------- */

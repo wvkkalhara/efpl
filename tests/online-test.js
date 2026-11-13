@@ -63,7 +63,7 @@ class FakeEventSource {
 window.EventSource = FakeEventSource;
 
 for (const src of ['js/config.js', 'js/store.js', 'js/domain.js', 'js/firebase.js', 'js/auth.js', 'js/sync.js', 'js/ui.js',
-  'js/seed.js', 'js/app.js', 'js/views-core.js', 'js/views-stock.js', 'js/views-money.js', 'js/tutorial.js']) {
+  'js/seed.js', 'js/app.js', 'js/views-core.js', 'js/views-stock.js', 'js/views-money.js', 'js/tutorial.js', 'js/help.js']) {
   window.eval(fs.readFileSync(path.join(ROOT, src), 'utf8'));
 }
 

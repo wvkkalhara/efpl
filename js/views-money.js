@@ -22,22 +22,22 @@
 
       view.innerHTML = `
         <section class="stats stats-4">
-          ${UI.stat('In the pipeline', money(sum(pipeline)), `${pipeline.length} payment(s)`, pipeline.length ? 'warn' : null)}
-          ${UI.stat('Awaiting authorisation', money(sum(bucket(['PENDING_SUPERVISOR']))), 'supervisor sign-off', 'warn')}
-          ${UI.stat('With Head Office', money(sum(bucket(['SENT_TO_HEAD_OFFICE']))), 'released for payment')}
-          ${UI.stat('Paid to date', money(sum(bucket(['PAID']))), `${bucket(['PAID']).length} settled`, 'ok')}
+          ${UI.stat('Not paid yet', money(sum(pipeline)), `${pipeline.length} payment(s)`, pipeline.length ? 'warn' : null)}
+          ${UI.stat('Waiting for the supervisor', money(sum(bucket(['PENDING_SUPERVISOR']))), 'to approve', 'warn')}
+          ${UI.stat('With Head Office', money(sum(bucket(['SENT_TO_HEAD_OFFICE']))), 'sent for payment')}
+          ${UI.stat('Paid to date', money(sum(bucket(['PAID']))), `${bucket(['PAID']).length} paid`, 'ok')}
         </section>
 
         <div class="toolbar">
           <div class="seg">
-            ${['All', 'Draft', 'Awaiting authorisation', 'Authorised', 'Sent to H.O.', 'Paid'].map((t, i) => {
+            ${['All', 'Draft', 'Waiting for supervisor', 'Approved', 'With Head Office', 'Paid'].map((t, i) => {
               const map = ['ALL', 'DRAFT', 'PENDING_SUPERVISOR', 'APPROVED', 'SENT_TO_HEAD_OFFICE', 'PAID'];
               return `<button class="seg-btn ${i === 0 ? 'active' : ''}" data-pfilter="${map[i]}">${t}</button>`;
             }).join('')}
           </div>
         </div>
         <div id="payment-table"></div>
-        <p class="muted small">A payment is created when a load is accepted, then goes to the supervisor, to Head Office, and is marked paid. Open one to see the supplier's bank details.</p>`;
+        <p class="muted small">A payment is made when a truck is accepted. The supervisor approves it, it goes to Head Office, then it is marked paid. Open one to see the bank details.</p>`;
 
       const draw = (filter) => {
         const list = filter === 'ALL' ? payments : payments.filter((p) => p.status === filter);
@@ -48,9 +48,9 @@
             { label: 'Payment', render: (p) => `<b>${esc(p.paymentNo)}</b><div class="muted small">${esc(dOnly(p.createdAt))}</div>` },
             { label: 'Supplier', render: (p) => `${esc(p.supplierName || supplierName(p.supplierId))}<div class="muted small">${esc(p.supplierCode || '')}</div>` },
             { label: 'Bags', cls: 'num', render: (p) => (p.bags || 0).toLocaleString() },
-            { label: 'Unit price', cls: 'num', render: (p) => money(p.unitPrice) },
-            { label: 'Deducted', cls: 'num', render: (p) => (p.deductions ? `<span class="t-danger">${p.deductionPct ? `${p.deductionPct}% · ` : ''}${money(p.deductions)}</span>` : '<span class="muted">—</span>') },
-            { label: 'Payable', cls: 'num', render: (p) => `<b>${money(p.netAmount)}</b>` },
+            { label: 'Price per bag', cls: 'num', render: (p) => money(p.unitPrice) },
+            { label: 'Taken off', cls: 'num', render: (p) => (p.deductions ? `<span class="t-danger">${p.deductionPct ? `${p.deductionPct}% · ` : ''}${money(p.deductions)}</span>` : '<span class="muted">—</span>') },
+            { label: 'To pay', cls: 'num', render: (p) => `<b>${money(p.netAmount)}</b>` },
             { label: 'Status', render: (p) => badge(D.PAYMENT_LABEL[p.status] || p.status, UI.statusTone(p.status)) },
             { label: '', cls: 'actions', render: (p) => `<button class="nm-btn tiny" data-pay="${p.id}">Open</button>` },
           ],
@@ -85,26 +85,26 @@
       body: `
         <div class="detail-grid">
           <div class="nm-inset pad-sm">
-            <h4>Payee</h4>
+            <h4>Supplier</h4>
             <p><b>${esc(p.supplierName || supplierName(p.supplierId))}</b><br/><span class="muted">${esc(p.supplierCode || '')}</span></p>
-            <h4>Against delivery</h4>
+            <h4>Truck</h4>
             <p>${d ? esc(d.receiptNo) : '—'}<br/><span class="muted">${d ? `${esc(d.bagCount)} bags · ${kg(d.netKg)} net` : ''}</span></p>
           </div>
           <div class="nm-inset pad-sm">
-            <h4>Computation</h4>
+            <h4>How it is worked out</h4>
             <table class="mini">
               <tr><td>Bags</td><td class="num">${p.bags}</td></tr>
-              <tr><td>Unit price</td><td class="num">${money(p.unitPrice)}</td></tr>
-              <tr><td>Gross</td><td class="num">${money(p.grossAmount)}</td></tr>
-              <tr><td>Deducted${p.deductionPct ? ` (${p.deductionPct}%)` : ''}</td><td class="num ${p.deductions ? 't-danger' : ''}">${p.deductions ? '− ' : ''}${money(p.deductions || 0)}</td></tr>
-              <tr><th>Net payable</th><th class="num">${money(p.netAmount)}</th></tr>
+              <tr><td>Price per bag</td><td class="num">${money(p.unitPrice)}</td></tr>
+              <tr><td>Value</td><td class="num">${money(p.grossAmount)}</td></tr>
+              <tr><td>Taken off${p.deductionPct ? ` (${p.deductionPct}%)` : ''}</td><td class="num ${p.deductions ? 't-danger' : ''}">${p.deductions ? '− ' : ''}${money(p.deductions || 0)}</td></tr>
+              <tr><th>To pay</th><th class="num">${money(p.netAmount)}</th></tr>
             </table>
             ${p.deductionReason ? `<p class="small muted">Reason: ${esc(p.deductionReason)}</p>` : ''}
           </div>
           <div class="nm-inset pad-sm">
             <h4>Pay to</h4>
             ${VH.bankHtml(sup)}
-            ${d && (d.allocations || []).length ? `<h4>Stored in</h4><p>${d.allocations.map((a) => `${esc(a.bayCode)} (${a.bags})`).join(', ')}</p>` : ''}
+            ${d && (d.allocations || []).length ? `<h4>Put in bays</h4><p>${d.allocations.map((a) => `${esc(a.bayCode)} (${a.bags})`).join(', ')}</p>` : ''}
           </div>
           <div class="nm-inset pad-sm">
             <h4>Status</h4>
@@ -118,9 +118,9 @@
       footer: `
         <button class="nm-btn" data-act="slip"><i class="i i-printer"></i>Payment slip</button>
         ${d && d.status === 'ACCEPTED' ? '<button class="nm-btn" data-act="invoice"><i class="i i-printer"></i>Invoice</button>' : ''}
-        ${canDeduct ? '<button class="nm-btn" data-act="deduct">Change deduction</button>' : ''}
-        ${canApprove ? '<button class="nm-btn primary" data-act="approve">Authorise</button>' : ''}
-        ${canRelease ? '<button class="nm-btn primary" data-act="release">Release to Head Office</button>' : ''}
+        ${canDeduct ? '<button class="nm-btn" data-act="deduct">Change amount taken off</button>' : ''}
+        ${canApprove ? '<button class="nm-btn primary" data-act="approve">Approve</button>' : ''}
+        ${canRelease ? '<button class="nm-btn primary" data-act="release">Send to Head Office</button>' : ''}
         ${canPay ? '<button class="nm-btn primary" data-act="paid">Mark as paid</button>' : ''}`,
       onMount(el, close) {
         el.addEventListener('click', (e) => {
@@ -140,14 +140,14 @@
           if (act === 'approve') {
 
             push('APPROVED', el.querySelector('[name=approveNote]') ? el.querySelector('[name=approveNote]').value : 'Verified', { status: 'APPROVED', approvedBy: who, approvedAt: now });
-            UI.toast('Payment authorised', 'ok');
+            UI.toast('Payment approved', 'ok');
           }
           if (act === 'release') {
-            push('SENT_TO_HEAD_OFFICE', 'Released to Head Office', { status: 'SENT_TO_HEAD_OFFICE', sentBy: who, sentAt: now });
+            push('SENT_TO_HEAD_OFFICE', 'Sent to Head Office', { status: 'SENT_TO_HEAD_OFFICE', sentBy: who, sentAt: now });
             UI.toast('Sent to Head Office', 'ok');
           }
           if (act === 'paid') {
-            push('PAID', 'Settlement confirmed', { status: 'PAID', paidAt: now, paidBy: who });
+            push('PAID', 'Paid', { status: 'PAID', paidAt: now, paidBy: who });
             UI.toast('Marked as paid', 'ok');
           }
           close(); App.refresh();
@@ -161,11 +161,11 @@
     const p = Store.byId('payments', id);
     if (!p) return;
     if (!Auth.can('payment.approve') || !['DRAFT', 'PENDING_SUPERVISOR'].includes(p.status)) {
-      return UI.toast('The deduction can only be changed before the payment is authorised', 'warn');
+      return UI.toast('The amount taken off can only be changed before the payment is approved', 'warn');
     }
     const d = Store.byId('deliveries', p.deliveryId);
     UI.modal({
-      title: `Deduction on ${p.paymentNo}`,
+      title: `Amount taken off ${p.paymentNo}`,
       body: `<div class="form-errors" role="alert"></div>
         <p class="muted">The load has been received. This takes a percentage off its value, for example for wet biomass.</p>
         ${d && d.avgBagKg ? VH.moistureScale(d.avgBagKg, { compact: true }) : ''}
@@ -228,7 +228,7 @@
         <tr><th>Bags</th><td>${p.bags}</td><th>Unit price</th><td>${money(p.unitPrice)}</td></tr>
         <tr><th>Gross value</th><td>${money(p.grossAmount)}</td><th>Deducted${p.deductionPct ? ` (${p.deductionPct}%)` : ''}</th><td>${money(p.deductions || 0)}</td></tr>
         ${p.deductionReason ? `<tr><th>Reason for deduction</th><td colspan="3">${esc(p.deductionReason)}</td></tr>` : ''}
-        <tr><th>Net payable</th><td colspan="3"><b>${money(p.netAmount)}</b></td></tr>
+        <tr><th>To pay</th><td colspan="3"><b>${money(p.netAmount)}</b></td></tr>
       </table>
       <h2>Pay to</h2>
       <table>
@@ -269,8 +269,8 @@
             { label: 'Supplier', render: (r) => `${esc(r.name)}<div class="muted small">${esc(r.address || '')}</div>` },
             { label: 'Contact', render: (r) => `${esc(r.phone || '—')}<div class="muted small">${esc(r.nic || '')}</div>` },
             { label: 'Bank', render: (r) => (VH.hasBank(r) ? `<span class="small">${esc(r.bankName || r.bank || '')}</span><div class="muted small mono">${esc(r.bankAccount || '')}</div>` : '<span class="t-warn small">not on file</span>') },
-            { label: 'Bags (30d)', cls: 'num', render: (r) => Store.where('deliveries', (d) => d.supplierId === r.id && d.status === 'ACCEPTED' && Date.now() - Date.parse(d.acceptedAt || 0) < 30 * 864e5).reduce((a, d) => a + d.bagCount, 0).toLocaleString() },
-            { label: 'Status', render: (r) => badge(r.status || 'ACTIVE', (r.status || 'ACTIVE') === 'ACTIVE' ? 'ok' : 'muted') },
+            { label: 'Bags, last 30 days', cls: 'num', render: (r) => Store.where('deliveries', (d) => d.supplierId === r.id && d.status === 'ACCEPTED' && Date.now() - Date.parse(d.acceptedAt || 0) < 30 * 864e5).reduce((a, d) => a + d.bagCount, 0).toLocaleString() },
+            { label: 'Status', render: (r) => badge((r.status || 'ACTIVE') === 'ACTIVE' ? 'Active' : 'Not active', (r.status || 'ACTIVE') === 'ACTIVE' ? 'ok' : 'muted') },
             { label: '', cls: 'actions', render: (r) => `<button class="nm-btn tiny" data-sup="${r.id}">Open</button>` },
           ],
         });
@@ -403,6 +403,8 @@
   };
 
   /* ============================ QUALITY ISSUES ======================= */
+  const SEVERITY = { LOW: 'Small', MEDIUM: 'Medium', HIGH: 'Serious' };
+
   App.register('quality', {
     title: 'Quality issues',
     render(view) {
@@ -411,17 +413,18 @@
         <section class="nm-card pad">
           <div class="card-head"><h3>Problems traced to the supplier</h3>
             ${Auth.can('quality.report') ? '<button class="nm-btn primary" id="new-issue"><i class="i i-plus"></i>Report an issue</button>' : ''}</div>
-          <p class="muted">When biomass causes trouble at the gasifier, the bag serial leads to the supplier who delivered it, so the corrective action reaches the right person.</p>
+          <p class="muted">When biomass causes trouble at the gasifier, the bag serial (or, for bags without one, the gasifier issue and the load it came from) leads to the supplier who delivered it, so the corrective action reaches the right person.</p>
         </section>
         ${UI.table({
           rows: issues, empty: 'No quality issues reported.', rowKey: (r) => r.id,
           columns: [
             { label: 'Issue', render: (r) => `<b>${esc(r.issueNo)}</b><div class="muted small">${esc(dOnly(r.reportedAt))}</div>` },
-            { label: 'Bag', render: (r) => `<span class="mono">${esc(r.bagSerial || '—')}</span>` },
+            { label: 'Bag or load', render: (r) => (r.bagSerial ? `<span class="mono">${esc(r.bagSerial)}</span>`
+              : `<span>${esc((Store.byId('deliveries', r.deliveryId) || {}).receiptNo || '—')}</span>${r.usageId ? `<div class="muted small">${esc((Store.byId('usageRequests', r.usageId) || {}).requestNo || '')}</div>` : ''}`) },
             { label: 'Supplier', render: (r) => esc(r.supplierName || supplierName(r.supplierId)) },
             { label: 'Category', render: (r) => esc((r.category || '').replace(/_/g, ' ').toLowerCase()) },
-            { label: 'Severity', render: (r) => badge(r.severity, r.severity === 'HIGH' ? 'danger' : r.severity === 'MEDIUM' ? 'warn' : 'muted') },
-            { label: 'Status', render: (r) => badge(r.status, r.status === 'OPEN' ? 'warn' : 'ok') },
+            { label: 'How serious', render: (r) => badge(SEVERITY[r.severity] || r.severity, r.severity === 'HIGH' ? 'danger' : r.severity === 'MEDIUM' ? 'warn' : 'muted') },
+            { label: 'Status', render: (r) => badge(r.status === 'OPEN' ? 'Open' : 'Closed', r.status === 'OPEN' ? 'warn' : 'ok') },
             { label: '', cls: 'actions', render: (r) => `<button class="nm-btn tiny" data-qi="${r.id}">Open</button>` },
           ],
         })}`;
@@ -431,14 +434,33 @@
     },
   });
 
-  App.raiseQuality = function (serial) {
+  /**
+   * Report a problem with the biomass. Either from a bag serial (the bag
+   * tells the supplier), or — for bags without serials — from a gasifier
+   * issue: the load(s) its bags came from are offered, oldest first.
+   */
+  App.raiseQuality = function (serial, opts) {
+    const o = opts || {};
     const serials = Store.where('bags', (b) => ['STORED', 'CONSUMED'].includes(b.status)).slice(-400).reverse();
+    const usage = o.usageId ? Store.byId('usageRequests', o.usageId) : null;
+    const loads = usage ? (usage.fromLoads || []).filter((l) => l && l.deliveryId) : [];
     UI.modal({
       title: 'Report a quality issue',
       size: 'md',
-      body: `<p class="muted">Enter the serial from the bag tag. The supplier is filled in automatically from the bag number.</p>
+      body: `<p class="muted">${usage
+        ? `From gasifier issue <b>${esc(usage.requestNo)}</b> (${esc(usage.bayCode || '')}). Choose the load the problem came from; a bag serial is only needed if the bags carry one.`
+        : 'Enter the serial from the bag tag. The supplier is filled in automatically from the bag number.'}</p>
         <div class="form-errors" role="alert"></div>
-        ${UI.field('Bag serial', UI.input('serial', { value: serial || '', placeholder: 'EFPL-BG-000302', list: 'serial-list' }))}
+        ${usage ? UI.field('Load', UI.select('loadId', loads.length
+          ? loads.map((l) => ({ value: l.deliveryId, label: `${l.receiptNo} · ${(Store.byId('suppliers', l.supplierId) || {}).name || ''} · ${l.bags} bags` }))
+          : [{ value: '', label: 'Not known' }])) : ''}
+        ${UI.field(usage ? 'Bag serial (if the bag has one)' : 'Bag serial', UI.input('serial', { value: serial || '', placeholder: 'EFPL-BG-000302', list: 'serial-list' }))}
+        ${!usage ? (() => {
+          const recentUse = Store.where('usageRequests', (u) => !u.deleted && u.status === 'CONSUMED')
+            .sort((a, b) => String(b.consumedAt || '').localeCompare(String(a.consumedAt || ''))).slice(0, 25);
+          return recentUse.length ? UI.field('No serial on the bag? Choose the gasifier issue instead', UI.select('fromUsage', [{ value: '', label: 'Choose a gasifier issue…' }]
+            .concat(recentUse.map((u) => ({ value: u.id, label: `${u.requestNo} · ${u.bayCode || ''} · ${u.bags} bags · ${dOnly(u.consumedAt)}` }))))) : '';
+        })() : ''}
         <datalist id="serial-list">${serials.slice(0, 200).map((b) => `<option value="${esc(b.serial)}"></option>`).join('')}</datalist>
         <div id="qi-trace" class="calc-strip"></div>
         <div class="grid-2">
@@ -447,20 +469,20 @@
             { value: 'UNDERFILLED', label: 'Under-filled bags' }, { value: 'SPECIES', label: 'Wrong species' },
             { value: 'DAMAGED_BAG', label: 'Damaged bag' }, { value: 'OTHER', label: 'Other' },
           ]))}
-          ${UI.field('Severity', UI.select('severity', [
-            { value: 'LOW', label: 'Low' }, { value: 'MEDIUM', label: 'Medium' }, { value: 'HIGH', label: 'High' },
+          ${UI.field('How serious', UI.select('severity', [
+            { value: 'LOW', label: 'Small' }, { value: 'MEDIUM', label: 'Medium' }, { value: 'HIGH', label: 'Serious' },
           ], { value: 'MEDIUM' }))}
         </div>
         ${UI.field('What happened?', UI.textarea('description', { rows: 3, placeholder: 'Gasifier flame unstable, bag weight 30 kg at consumption…' }))}
-        ${UI.field('Corrective action', UI.textarea('correctiveAction', { rows: 2, placeholder: 'Supplier to dry before bagging; mix 1:2 with a drier bay.' }))}
-        ${UI.field('How were they informed?', UI.input('notifiedVia', { placeholder: 'Phone call to the supplier' }))}`,
-      footer: '<button class="nm-btn" data-close>Cancel</button><button class="nm-btn primary" data-act="save">Record issue</button>',
+        ${UI.field('What will be done about it', UI.textarea('correctiveAction', { rows: 2, placeholder: 'Supplier to dry before bagging; mix 1:2 with a drier bay.' }))}
+        ${UI.field('How was the supplier told?', UI.input('notifiedVia', { placeholder: 'Phone call to the supplier' }))}`,
+      footer: '<button class="nm-btn" data-close>Cancel</button><button class="nm-btn primary" data-act="save">Save</button>',
       onMount(el, close) {
         const input = el.querySelector('[name=serial]');
         const trace = () => {
           const v = input.value.trim();
           const box = el.querySelector('#qi-trace');
-          if (!v) { box.innerHTML = '<span class="muted">Enter a serial to see who supplied the bag.</span>'; return; }
+          if (!v) { box.innerHTML = usage ? '' : '<span class="muted">Enter a serial to see who supplied the bag.</span>'; return; }
           const r = D.traceBag(Store, v);
           if (!r) { box.innerHTML = '<span class="t-warn">Serial not found in the registry</span>'; return; }
           box.innerHTML = `<div><span class="muted small">Supplier</span><b>${esc(r.supplier ? r.supplier.name : '—')}</b></div>
@@ -470,24 +492,35 @@
         };
         input.addEventListener('input', UI.debounce(trace, 220));
         trace();
+        const fromUsage = el.querySelector('[name=fromUsage]');
+        if (fromUsage) fromUsage.addEventListener('change', () => {
+          if (!fromUsage.value) return;
+          const id = fromUsage.value;
+          close();
+          setTimeout(() => App.raiseQuality(null, { usageId: id }), 260);
+        });
 
         el.querySelector('[data-act=save]').addEventListener('click', () => {
           const data = UI.formData(el.querySelector('.modal-body'));
-          const r = D.traceBag(Store, data.serial);
-          if (!data.serial || !r) return UI.toast('Enter a valid bag serial', 'warn');
+          const r = data.serial ? D.traceBag(Store, data.serial) : null;
+          if (data.serial && !r) return UI.toast('That bag serial is not in the registry', 'warn');
+          if (!r && !usage) return UI.toast('Enter a valid bag serial', 'warn');
           if (!data.description) return UI.toast('Describe what happened', 'warn');
+          // from the bag if it has a serial, otherwise from the load chosen
+          const load = !r && data.loadId ? Store.byId('deliveries', data.loadId) : null;
+          const supplierId = r ? (r.bag.supplierId || null) : (load ? load.supplierId : null);
+          const supplier = supplierId ? Store.byId('suppliers', supplierId) : null;
           const rec = Store.add('qualityIssues', {
             issueNo: 'QI-' + String(Store.nextSeq('quality', 1)).padStart(4, '0'),
-            bagSerial: r.bag.serial, deliveryId: r.bag.deliveryId || null,
-            supplierId: r.bag.supplierId || null, supplierName: r.supplier ? r.supplier.name : null,
-
+            bagSerial: r ? r.bag.serial : '', deliveryId: r ? (r.bag.deliveryId || null) : (load ? load.id : null),
+            supplierId, supplierName: supplier ? supplier.name : null,
             category: data.category, severity: data.severity, description: data.description,
             correctiveAction: data.correctiveAction || '', status: 'OPEN',
             reportedBy: Auth.current().email, reportedAt: new Date().toISOString(),
             notifiedVia: data.notifiedVia || '', notifiedAt: data.notifiedVia ? new Date().toISOString() : null,
-            usageId: r.usage ? r.usage.id : null,
+            usageId: usage ? usage.id : (r && r.usage ? r.usage.id : null),
           }, 'quality-create');
-          VH.audit('quality.report', 'quality', rec.id, `${rec.issueNo} · ${rec.bagSerial} · ${rec.severity}`);
+          VH.audit('quality.report', 'quality', rec.id, `${rec.issueNo} · ${rec.bagSerial || (load ? load.receiptNo : usage.requestNo)} · ${rec.severity}`);
           UI.toast(`Issue ${rec.issueNo} recorded and traced`, 'ok');
           close(); App.refresh();
         });
@@ -498,25 +531,27 @@
   App.openQuality = function (id) {
     const q = Store.byId('qualityIssues', id);
     if (!q) return;
-    const r = D.traceBag(Store, q.bagSerial);
+    const r = q.bagSerial ? D.traceBag(Store, q.bagSerial) : null;
+    const load = r && r.delivery ? r.delivery : (q.deliveryId ? Store.byId('deliveries', q.deliveryId) : null);
+    const use = q.usageId ? Store.byId('usageRequests', q.usageId) : null;
     UI.modal({
-      title: `${q.issueNo} · ${q.bagSerial}`,
+      title: `${q.issueNo} · ${q.bagSerial || (load ? load.receiptNo : (use ? use.requestNo : ''))}`,
       size: 'md',
-      body: `<p>${badge(q.severity, q.severity === 'HIGH' ? 'danger' : q.severity === 'MEDIUM' ? 'warn' : 'muted')} ${badge(q.status, q.status === 'OPEN' ? 'warn' : 'ok')}</p>
+      body: `<p>${badge(SEVERITY[q.severity] || q.severity, q.severity === 'HIGH' ? 'danger' : q.severity === 'MEDIUM' ? 'warn' : 'muted')} ${badge(q.status === 'OPEN' ? 'Open' : 'Closed', q.status === 'OPEN' ? 'warn' : 'ok')}</p>
         <div class="detail-grid">
           <div class="nm-inset pad-sm"><h4>Traced to</h4>
             <p>Supplier: <b>${esc(q.supplierName || '—')}</b><br/>
-            Bay: <b>${esc(r && r.bag.bayCode ? r.bag.bayCode : '—')}</b><br/>
-            Receipt: <b>${esc(r && r.delivery ? r.delivery.receiptNo : '—')}</b></p></div>
+            Bay: <b>${esc(r && r.bag.bayCode ? r.bag.bayCode : (use ? use.bayCode : '—'))}</b><br/>
+            Receipt: <b>${esc(load ? load.receiptNo : '—')}</b>${use ? `<br/>Gasifier issue: <b>${esc(use.requestNo)}</b>` : ''}</p></div>
           <div class="nm-inset pad-sm"><h4>Reported</h4>
             <p>${esc(dt(q.reportedAt))}<br/><span class="muted">by ${esc(q.reportedBy)}</span><br/>
             Notified: ${esc(q.notifiedVia || 'not yet')}${q.notifiedAt ? `<br/><span class="muted">${esc(dt(q.notifiedAt))}</span>` : ''}</p></div>
         </div>
         <h4>Description</h4><p>${esc(q.description)}</p>
-        <h4>Corrective action</h4><p>${esc(q.correctiveAction || '—')}</p>
+        <h4>What will be done about it</h4><p>${esc(q.correctiveAction || '—')}</p>
         ${q.status === 'RESOLVED' ? `<p class="small t-ok">Resolved ${esc(dt(q.resolvedAt))} by ${esc(q.resolvedBy || '')}</p>` : ''}`,
       footer: q.status === 'OPEN' && Auth.can('quality.resolve')
-        ? '<button class="nm-btn" data-act="notify">Mark supplier notified</button><button class="nm-btn primary" data-act="resolve">Resolve</button>' : '',
+        ? '<button class="nm-btn" data-act="notify">Supplier has been told</button><button class="nm-btn primary" data-act="resolve">Close the problem</button>' : '',
       onMount(el, close) {
         el.addEventListener('click', (e) => {
           const b = e.target.closest('[data-act]');
@@ -536,120 +571,187 @@
     });
   };
 
-  /* ============================ BAG RETURNS ========================= */
+  /* ============================= BAG STORE ==========================
+     The empty bags, by count. Two shelves: NEW (bought in) and USED
+     (emptied at the gasifier and still good). Rounds go out to suppliers
+     from the used shelf first, topped up with new; torn bags are thrown
+     away; a stock-take corrects the shelves to what is really there.
+     (The route keeps its old id, "returns", so links keep working.)
+     ==================================================================== */
   App.register('returns', {
-    title: 'Bag returns',
+    title: 'Bag store',
     render(view) {
-      const bags = Store.all('bags');
-      const returned = bags.filter((b) => b.status === 'CONSUMED' || b.status === 'RETURNED');
-      const damaged = bags.filter((b) => b.status === 'DAMAGED');
-      const returns = Store.all('bagReturns').slice().sort((a, b) => Date.parse(b.returnedAt) - Date.parse(a.returnedAt));
-      const pendingReplacement = returns.reduce((a, r) => a + (r.replacementOrderQty || 0), 0);
+      const st = VH.bagStore();
+      const sups = VH.supplierBags().filter((x) => x.given || x.back);
+      const canStore = Auth.can('returns.write');
+      const canIssue = Auth.can('bag.issue');
+      const KIND = { PURCHASE: ['New bags in', 'ok'], DISCARD: ['Thrown away', 'danger'], COUNT: ['Counted', 'info'], ISSUE: ['To supplier', 'warn'], GASIFIER: ['Back from the gasifier', 'ok'], OLD: ['Earlier record', 'muted'] };
+      const signed = (v) => (v > 0 ? `+${v.toLocaleString()}` : v < 0 ? `−${Math.abs(v).toLocaleString()}` : '');
 
       view.innerHTML = `
+        ${!st.started ? `<div class="banner banner-info"><span><b>Start the bag store:</b> count the empty bags on the shelves now (new and used) with <b>Count the store</b>. From then on the app keeps the figures up to date by itself.</span></div>` : ''}
+        ${st.started && st.low ? `<div class="banner banner-warn"><span><b>Order new bags:</b> only ${Math.max(0, st.new).toLocaleString()} new bags left (the warning level is ${st.reorderLevel.toLocaleString()}). Torn bags are replaced from this shelf.</span></div>` : ''}
         <section class="stats stats-4">
-          ${UI.stat('Empty bags to check', returned.length.toLocaleString(), 'emptied at the gasifier', returned.length ? 'warn' : null)}
-          ${UI.stat('Being repaired', damaged.length.toLocaleString(), 'back to stock once fixed', damaged.length ? 'warn' : null)}
-          ${UI.stat('Bags in store', bags.filter((b) => b.status === 'IN_STOCK').length.toLocaleString(), 'numbered and available')}
-          ${UI.stat('Replacements ordered', pendingReplacement.toLocaleString(), 'across all returns')}
+          ${UI.stat('Used bags in the store', Math.max(0, st.used).toLocaleString(), 'given out first', st.used < 0 ? 'danger' : null)}
+          ${UI.stat('New bags in the store', Math.max(0, st.new).toLocaleString(), `warning at ${st.reorderLevel.toLocaleString()}`, st.low ? 'danger' : null)}
+          ${UI.stat('With suppliers', st.withSuppliers.toLocaleString(), 'given out, not back yet')}
+          ${UI.stat('Thrown away, 30 days', st.discarded30.toLocaleString(), `${st.discarded.toLocaleString()} in all`, st.discarded30 ? 'warn' : null)}
         </section>
+        <p class="muted small bag-where">Where every bag is: <b>${Math.max(0, st.used).toLocaleString()}</b> used and <b>${Math.max(0, st.new).toLocaleString()}</b> new in the store, <b>${st.withSuppliers.toLocaleString()}</b> with suppliers, <b>${st.inBays.toLocaleString()}</b> full in the bays.</p>
+        ${st.used < 0 || st.new < 0 ? '<div class="banner banner-warn"><span>A shelf shows fewer than zero bags: more went out than the app knew were there. Count the store to put it right.</span></div>' : ''}
         <div class="toolbar">
-          <p class="muted">Empty bags come back to the bag area, are checked, repaired where possible, and replacements are ordered.</p>
+          <div class="toolbar-left"></div>
           <div class="toolbar-right">
-            ${Auth.can('returns.write') && damaged.length ? `<button class="nm-btn" id="repaired-back">Repaired bags back to stock (${damaged.length})</button>` : ''}
-            ${Auth.can('returns.write') ? '<button class="nm-btn primary" id="new-return"><i class="i i-plus"></i>Record a return</button>' : ''}
+            ${canStore ? '<button class="nm-btn" id="bs-count">Count the store</button>' : ''}
+            ${canStore ? '<button class="nm-btn" id="bs-torn">Record torn bags</button>' : ''}
+            ${canStore ? '<button class="nm-btn" id="bs-new"><i class="i i-plus"></i>Receive new bags</button>' : ''}
+            ${canIssue ? '<button class="nm-btn primary" id="bs-issue">Issue bags to a supplier</button>' : ''}
           </div>
         </div>
-        ${UI.table({
-          rows: returns, empty: 'No returns recorded yet.',
-          columns: [
-            { label: 'Return', render: (r) => `<b>${esc(r.returnNo)}</b><div class="muted small">${esc(dOnly(r.returnedAt))}</div>` },
-            { label: 'Returned', cls: 'num', render: (r) => r.returnedBags },
-            { label: 'Good', cls: 'num', render: (r) => r.good },
-            { label: 'For repair', cls: 'num', render: (r) => r.repairable },
-            { label: 'Replaced', cls: 'num', render: (r) => r.replaced },
-            { label: 'Order raised', render: (r) => (r.repairOrderRaised ? badge('repair order', 'ok') : '') + (r.replacementOrderQty ? ` ${badge(`${r.replacementOrderQty} new bags`, 'info')}` : '') },
-            { label: 'Note', render: (r) => `<span class="muted small">${esc(r.note || '')}</span>` },
-          ],
-        })}`;
-      const nr = view.querySelector('#new-return');
-      if (nr) nr.addEventListener('click', () => App.recordReturn());
-      const rb = view.querySelector('#repaired-back');
-      if (rb) rb.addEventListener('click', async () => {
-        const ok = await UI.confirm({
-          title: 'Repaired bags back to stock?', tone: 'primary', confirmText: 'Back to stock',
-          message: `${damaged.length} repaired bag(s) keep their serial numbers and become available to issue again.`,
-        });
-        if (!ok) return;
-        const now = new Date().toISOString();
-        for (const b of damaged) { Object.assign(b, { status: 'IN_STOCK', condition: 'REPAIRED', updatedAt: now }); Store.markDirty('bags', b.id); }
-        Store.save('bag-repaired');
-        VH.audit('returns.repaired', 'bags', 'batch', `${damaged.length} repaired bags returned to stock`);
-        UI.toast(`${damaged.length} bags back in stock`, 'ok');
-        App.refresh();
-      });
+
+        <section class="nm-card pad">
+          <div class="card-head"><h3>Bags with suppliers</h3></div>
+          ${UI.table({
+            rows: sups, empty: 'No bags given to suppliers yet.',
+            columns: [
+              { label: 'Supplier', render: (r) => `<b>${esc(r.supplier.name || '—')}</b><div class="muted small">${esc(r.supplier.code || '')}</div>` },
+              { label: 'Given', cls: 'num', render: (r) => r.given.toLocaleString() },
+              { label: 'Brought back full', cls: 'num', render: (r) => r.back.toLocaleString() },
+              { label: 'Holding now', cls: 'num', render: (r) => (r.holding >= 0 ? `<b>${r.holding.toLocaleString()}</b>` : `0<div class="muted small">used ${Math.abs(r.holding).toLocaleString()} of their own</div>`) },
+              { label: 'Last round', render: (r) => `<span class="muted small">${esc(r.last ? dOnly(r.last) : '—')}</span>` },
+              { label: '', cls: 'actions', render: (r) => (canIssue ? `<button class="nm-btn tiny" data-issue-to="${esc(r.supplierId)}">Issue</button>` : '') },
+            ],
+          })}
+        </section>
+
+        <section class="nm-card pad">
+          <div class="card-head"><h3>Movements</h3></div>
+          ${UI.table({
+            rows: st.moves.slice(0, 150), empty: 'Nothing has moved yet.',
+            columns: [
+              { label: 'When', render: (m) => `${esc(dOnly(m.at))}<div class="muted small">${esc(String(dt(m.at)).split(', ').pop() || '')}</div>` },
+              { label: 'What', render: (m) => `${badge(KIND[m.kind][0], KIND[m.kind][1])}<div class="small">${esc(m.what)}</div>` },
+              { label: 'Used', cls: 'num', render: (m) => `<span class="${m.usedD < 0 ? 't-danger' : m.usedD > 0 ? 't-ok' : ''}">${signed(m.usedD)}</span>` },
+              { label: 'New', cls: 'num', render: (m) => `<span class="${m.newD < 0 ? 't-danger' : m.newD > 0 ? 't-ok' : ''}">${signed(m.newD)}</span>` },
+              { label: 'Reference', render: (m) => `<b>${esc(m.ref || '')}</b><div class="muted small">${esc(m.note || '')}</div>` },
+              { label: 'Who', render: (m) => `<span class="small">${esc(m.by || '')}</span>` },
+            ],
+          })}
+          <p class="small muted">Empty bags come back from the gasifier: the good ones go on the used shelf and the torn ones are thrown away. Rounds go out from the used shelf first, then new bags.</p>
+        </section>`;
+
+      const on = (id, fn) => { const b = view.querySelector(id); if (b) b.addEventListener('click', fn); };
+      on('#bs-new', () => App.receiveNewBags());
+      on('#bs-torn', () => App.discardBags());
+      on('#bs-count', () => App.countBagStore());
+      on('#bs-issue', () => App.issueBags());
+      UI.$$('[data-issue-to]', view).forEach((b) => b.addEventListener('click', () => App.issueBags(b.dataset.issueTo)));
     },
   });
 
-  App.recordReturn = function () {
-    const waiting = Store.where('bags', (b) => b.status === 'CONSUMED' || b.status === 'RETURNED').length;
-    const start = Math.min(waiting, 50);
+  const storeRecordNo = () => 'BS-' + String(Store.nextSeq('bagReturn', 1)).padStart(4, '0');
+
+  /** New bags bought in: they go on the new shelf. */
+  App.receiveNewBags = function () {
+    if (!Auth.can('returns.write')) return UI.toast('Your role cannot change the bag store', 'danger');
     UI.modal({
-      title: 'Record a bag return',
+      title: 'Receive new bags',
+      size: 'sm',
       body: `<div class="form-errors" role="alert"></div>
-        <p class="muted">${waiting.toLocaleString()} empty bag(s) are waiting to be checked. Sort the returned bags into the three groups below.</p>
-        <div class="grid-3">
-          ${UI.field('Bags returned', UI.input('returnedBags', { type: 'number', min: 1, value: start, required: true }))}
-          ${UI.field('Good, back to stock', UI.input('good', { type: 'number', min: 0, value: start }))}
-          ${UI.field('Can be repaired', UI.input('repairable', { type: 'number', min: 0, value: 0 }))}
-        </div>
-        <div class="grid-2">
-          ${UI.field('Beyond repair (replace)', UI.input('replaced', { type: 'number', min: 0, value: 0 }))}
-          ${UI.field('New bags to order', UI.input('replacementOrderQty', { type: 'number', min: 0, value: 0 }))}
-        </div>
-        ${UI.field('Note', UI.input('note', { placeholder: 'Stitching repaired in-house…' }))}`,
-      footer: '<button class="nm-btn" data-close>Cancel</button><button class="nm-btn primary" data-act="save">Save</button>',
+        ${UI.field('How many new bags?', UI.input('newQty', { type: 'number', min: 1, value: 1000 }))}
+        ${UI.field('From (bag seller)', UI.input('vendor', { placeholder: 'Bag seller or invoice number' }))}
+        ${UI.field('Note', UI.input('note', { placeholder: 'Optional' }))}`,
+      footer: '<button class="nm-btn" data-close>Cancel</button><button class="nm-btn primary" data-act="save">Add to the store</button>',
       onMount(el, close) {
         el.querySelector('[data-act=save]').addEventListener('click', () => {
-          const data = UI.formData(el.querySelector('.modal-body'));
-          const total = Number(data.returnedBags) || 0;
-          const good = Number(data.good) || 0, repairable = Number(data.repairable) || 0, replaced = Number(data.replaced) || 0;
-          const errors = [];
-          if (total < 1) errors.push('Enter how many bags were returned');
-          if (good + repairable + replaced > total) errors.push('The three groups add up to more bags than were returned');
-          UI.showErrors(el, errors);
-          if (errors.length) return;
+          const f = UI.formData(el.querySelector('.modal-body'));
+          const q = Math.round(Number(f.newQty) || 0);
+          if (q < 1) return UI.showErrors(el, ['Enter how many new bags came in']);
           const rec = Store.add('bagReturns', {
-            returnNo: 'BR-' + String(Store.nextSeq('bagReturn', 1)).padStart(4, '0'),
-            returnedBags: total, good, repairable, replaced, lost: Math.max(0, total - good - repairable - replaced),
-            returnedAt: new Date().toISOString(), recordedBy: Auth.current().email,
-            repairOrderRaised: repairable > 0, replacementOrderQty: Number(data.replacementOrderQty) || 0,
-            replacementOrderedAt: Number(data.replacementOrderQty) ? new Date().toISOString() : null,
-            note: data.note || '',
-          }, 'bag-return-record');
-
-          // Move the emptied bags on, oldest first. Each keeps its serial; the
-          // links to the finished trip are cleared so the next round starts clean.
-          const pool = Store.where('bags', (b) => b.status === 'CONSUMED' || b.status === 'RETURNED')
-            .slice().sort((a, b) => Date.parse(a.consumedAt || a.updatedAt || 0) - Date.parse(b.consumedAt || b.updatedAt || 0));
-          const now = new Date().toISOString();
-          const cleared = { supplierId: null, bayId: null, bayCode: null, deliveryId: null, usageId: null, bagIssueId: null, returnedAt: now, updatedAt: now };
-          let i = 0;
-          const move = (n, patch) => {
-            for (let k = 0; k < n && i < pool.length; k++, i++) { Object.assign(pool[i], cleared, patch); Store.markDirty('bags', pool[i].id); }
-          };
-          move(good, { status: 'IN_STOCK', condition: 'GOOD' });
-          move(repairable, { status: 'DAMAGED', condition: 'REPAIR' });
-          move(replaced, { status: 'RETIRED', condition: 'BEYOND_REPAIR' });
-          Store.save('bag-return-sync');
-
-          VH.audit('returns.record', 'bagReturn', rec.id, `${total} bags · ${good} good · ${repairable} for repair · ${replaced} replaced`);
-          UI.toast('Return recorded', 'ok');
+            kind: 'PURCHASE', returnNo: storeRecordNo(), newQty: q, vendor: f.vendor || '', note: f.note || '',
+            at: new Date().toISOString(), returnedAt: new Date().toISOString(), recordedBy: Auth.current().email,
+          }, 'bags-purchase');
+          VH.audit('bags.purchase', 'bagReturn', rec.id, `${q} new bags received${f.vendor ? ` from ${f.vendor}` : ''}`);
+          UI.toast(`${q.toLocaleString()} new bags added to the store`, 'ok');
           close(); App.refresh();
         });
       },
     });
   };
+
+  /** Torn bags found in the store (not at the gasifier): thrown away. */
+  App.discardBags = function () {
+    if (!Auth.can('returns.write')) return UI.toast('Your role cannot change the bag store', 'danger');
+    const st = VH.bagStore();
+    UI.modal({
+      title: 'Record torn bags',
+      size: 'sm',
+      body: `<div class="form-errors" role="alert"></div>
+        <p class="muted small">For bags found torn or spoiled in the store. (Bags torn at the gasifier are recorded there.) They are thrown away; new bags make up the numbers when rounds go out.</p>
+        ${UI.field('From which shelf?', UI.select('shelf', [
+          { value: 'USED', label: `Used bags (${Math.max(0, st.used)} in the store)` },
+          { value: 'NEW', label: `New bags (${Math.max(0, st.new)} in the store)` },
+        ]))}
+        ${UI.field('How many?', UI.input('qty', { type: 'number', min: 1, value: 1 }))}
+        ${UI.field('Why?', UI.select('reason', ['Torn', 'Rotten or mouldy', 'Burnt', 'Rats', 'Lost', 'Other'].map((x) => ({ value: x, label: x }))))}
+        ${UI.field('Note', UI.input('note', { placeholder: 'Optional' }))}`,
+      footer: '<button class="nm-btn" data-close>Cancel</button><button class="nm-btn danger" data-act="save">Throw away</button>',
+      onMount(el, close) {
+        el.querySelector('[data-act=save]').addEventListener('click', () => {
+          const f = UI.formData(el.querySelector('.modal-body'));
+          const q = Math.round(Number(f.qty) || 0);
+          const have = Math.max(0, f.shelf === 'NEW' ? st.new : st.used);
+          const errors = [];
+          if (q < 1) errors.push('Enter how many bags');
+          if (q > have) errors.push(`Only ${have} ${f.shelf === 'NEW' ? 'new' : 'used'} bags are in the store. If that is wrong, count the store first.`);
+          UI.showErrors(el, errors);
+          if (errors.length) return;
+          const rec = Store.add('bagReturns', {
+            kind: 'DISCARD', returnNo: storeRecordNo(), shelf: f.shelf, qty: q, reason: [f.reason, f.note].filter(Boolean).join(': '),
+            at: new Date().toISOString(), returnedAt: new Date().toISOString(), recordedBy: Auth.current().email,
+          }, 'bags-discard');
+          VH.audit('bags.discard', 'bagReturn', rec.id, `${q} ${f.shelf === 'NEW' ? 'new' : 'used'} bags thrown away (${f.reason})`);
+          UI.toast(`${q} bags thrown away`, 'ok');
+          close(); App.refresh();
+        });
+      },
+    });
+  };
+
+  /** Stock-take: type what is really on the shelves; the app corrects itself. */
+  App.countBagStore = function () {
+    if (!Auth.can('returns.write')) return UI.toast('Your role cannot change the bag store', 'danger');
+    const st = VH.bagStore();
+    UI.modal({
+      title: 'Count the store',
+      size: 'sm',
+      body: `<div class="form-errors" role="alert"></div>
+        <p class="muted small">Count the empty bags on the shelves and type the numbers. The app's figures are set to them, and the difference is kept in the movements.</p>
+        <div class="grid-2">
+          ${UI.field('Used bags counted', UI.input('usedCounted', { type: 'number', min: 0, value: Math.max(0, st.used) }), `App says ${st.used.toLocaleString()}`)}
+          ${UI.field('New bags counted', UI.input('newCounted', { type: 'number', min: 0, value: Math.max(0, st.new) }), `App says ${st.new.toLocaleString()}`)}
+        </div>
+        ${UI.field('Note', UI.input('note', { placeholder: 'Monthly count, counted by…' }))}`,
+      footer: '<button class="nm-btn" data-close>Cancel</button><button class="nm-btn primary" data-act="save">Save the count</button>',
+      onMount(el, close) {
+        el.querySelector('[data-act=save]').addEventListener('click', () => {
+          const f = UI.formData(el.querySelector('.modal-body'));
+          const u = Math.round(Number(f.usedCounted)), nw = Math.round(Number(f.newCounted));
+          if (!Number.isFinite(u) || !Number.isFinite(nw) || u < 0 || nw < 0) return UI.showErrors(el, ['Enter both counts (0 or more)']);
+          const now = VH.bagStore();   // figures at this moment, in case something moved meanwhile
+          const rec = Store.add('bagReturns', {
+            kind: 'COUNT', returnNo: storeRecordNo(), usedCounted: u, newCounted: nw,
+            usedDelta: u - now.used, newDelta: nw - now.new, note: f.note || '',
+            at: new Date().toISOString(), returnedAt: new Date().toISOString(), recordedBy: Auth.current().email,
+          }, 'bags-count');
+          VH.audit('bags.count', 'bagReturn', rec.id, `Store counted: ${u} used (${signedText(u - now.used)}), ${nw} new (${signedText(nw - now.new)})`);
+          UI.toast('Count saved. The store figures now match the shelves.', 'ok');
+          close(); App.refresh();
+        });
+      },
+    });
+  };
+  const signedText = (v) => (v > 0 ? `+${v}` : `${v}`);
 
   /* =============================== REPORTS ===========================
      A live view: pick any period, supplier or biomass type and every
@@ -850,7 +952,7 @@
                 ${r.avgKgIn && r.avgKgOut ? `<tr><th>Bag weight change in store</th><td class="num">—</td><td class="num">${D.round2(r.avgKgOut - r.avgKgIn)} kg</td></tr>` : ''}
               </table>
             </div>
-            <p class="small muted">In is the weighbridge net at receiving. Out is the three-bag average applied to each issue. A lighter bag going out than coming in means the stock dried in the bay.</p>
+            <p class="small muted">In: the weight from the weighbridge. Out: the 3-bag average at the gasifier. If bags going out are lighter than bags coming in, the biomass dried in the bay.</p>
           </section>
 
           <section class="cols-2">
@@ -979,7 +1081,7 @@
         { id: 'users', label: 'Users &amp; roles', ok: Auth.can('user.manage') },
         { id: 'sub', label: 'Subscription', ok: isSuper },
         { id: 'settings', label: 'Business settings', ok: Auth.can('settings.write') },
-        { id: 'audit', label: 'Audit trail', ok: Auth.can('audit.read') },
+        { id: 'audit', label: 'Activity log', ok: Auth.can('audit.read') },
         { id: 'data', label: 'Data &amp; sync', ok: Auth.can('user.manage') },
       ];
       const allowed = TAB_DEFS.filter((t) => t.ok);
@@ -1098,6 +1200,7 @@
               ${UI.field('Minimum sample bags', UI.input('minSampleSize', { type: 'number', min: 1, max: 50, value: s.minSampleSize }))}
               ${UI.field('Bag serial prefix', UI.input('bagSerialPrefix', { value: s.bagSerialPrefix }))}
               ${UI.field('Maximum bags per delivery', UI.input('maxBagsPerDelivery', { type: 'number', min: 1, value: s.maxBagsPerDelivery }))}
+              ${UI.field('Warn when new bags fall to', UI.input('bagReorderLevel', { type: 'number', min: 0, value: s.bagReorderLevel ?? 500 }), 'Bag store: time to order more')}
               ${UI.field('Site name', UI.input('siteName', { value: s.siteName }))}
               ${UI.field('Site location', UI.input('siteLocation', { value: s.siteLocation }))}
               ${UI.field('Head Office email', UI.input('headOfficeEmail', { type: 'email', value: s.headOfficeEmail }))}
@@ -1129,7 +1232,7 @@
 
         audit: () => { const audit = auditRows(); return `
           <section class="nm-card pad">
-            <div class="card-head"><h3>Audit trail</h3><span class="muted small" id="audit-count">${audit.length} most recent actions, from every device${Sync.state.live ? ', updating live' : ''}</span></div>
+            <div class="card-head"><h3>Activity log</h3><span class="muted small" id="audit-count">${audit.length} most recent actions, from every device${Sync.state.live ? ', updating live' : ''}</span></div>
             <p class="muted">Every acceptance, deduction, payment step, bag movement and settings change by staff is recorded here with the person, the device and the time. Nothing in this list can be edited from the app.</p>
             ${UI.table({
               rows: audit,
@@ -1163,11 +1266,11 @@
               </div>
             </div>
             <div class="nm-card pad">
-              <div class="card-head"><h3>Restore &amp; reset</h3></div>
-              <p class="muted small">Import a backup file. Importing merges by newest change per record.</p>
+              <div class="card-head"><h3>Load a backup</h3></div>
+              <p class="muted small">Load a backup file. For each record, the newest copy is kept.</p>
               <input type="file" id="import-file" accept="application/json" class="nm-input" />
               <div class="row-actions">
-                <button class="nm-btn" id="import-merge">Import (merge)</button>
+                <button class="nm-btn" id="import-merge">Load backup</button>
               </div>
               <div class="divider"></div>
               <h4>Fix this device</h4>
@@ -1332,7 +1435,7 @@
         if (tab === 'settings') {
           const NUM_FIELDS = ['unitPrice', 'reducedUnitPrice', 'fillThresholdPct', 'sampleSizePct', 'minSampleSize',
             'moistureCalKg1', 'moistureCalPct1', 'moistureCalKg2', 'moistureCalPct2',
-            'moistureWarnPct', 'moistureHighPct', 'deductDampPct', 'deductWetPct', 'maxBagsPerDelivery'];
+            'moistureWarnPct', 'moistureHighPct', 'deductDampPct', 'deductWetPct', 'maxBagsPerDelivery', 'bagReorderLevel'];
           const readNums = () => {
             const out = {};
             for (const k of NUM_FIELDS) out[k] = Number((body.querySelector(`[name=${k}]`) || {}).value);

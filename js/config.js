@@ -8,7 +8,7 @@
    ===================================================================== */
 window.EFPL_CONFIG = {
   appName: 'EnerFab Biomass Storage',
-  version: '1.6.1',
+  version: '1.8.0',
   build: '2026.11',
 
   /* ---- Firebase project (efpl-2feb8) ---- */
@@ -76,6 +76,8 @@ window.EFPL_CONFIG = {
     driestBagKg: 18,          // bags stop losing weight here (18 kg = 20 % moisture)
     moistureReadyPct: 25,     // a bay at or below this is flagged "dry: use first"
     defaultDeductionReason: 'Bags are not filled fully',
+    // Bag store: warn when the new-bag shelf falls to this many.
+    bagReorderLevel: 500,
   },
 
   biomassTypes: [

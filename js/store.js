@@ -66,6 +66,9 @@
     'deductionPct', 'deductionAmount', 'payableAmount', 'dryingKgPerDay', 'driestBagKg', 'moistureReadyPct',
     'bayCapacityBags', 'lastWeighKg', 'rev', 'moistureCalKg1', 'moistureCalPct1',
     'moistureCalKg2', 'moistureCalPct2', 'moistureWarnPct', 'moistureHighPct', 'deductDampPct', 'deductWetPct',
+    // bag store
+    'usedQty', 'newQty', 'bagsGood', 'bagsTorn', 'newDelta', 'usedDelta', 'newCounted', 'usedCounted',
+    'bagReorderLevel', 'requestedBags',
   ]);
   const HTML_CHARS = /[<>"`]/g;
   function clean(value, key) {
@@ -109,7 +112,7 @@
     }
     if (coll === 'bagIssues') list('serials');
     if (coll === 'payments') list('history');
-    if (coll === 'usageRequests' && rec.status === 'CONSUMED') { list('sampleBags'); list('bagSerials'); }
+    if (coll === 'usageRequests' && rec.status === 'CONSUMED') { list('sampleBags'); list('bagSerials'); list('fromLoads'); }
     return rec;
   }
 

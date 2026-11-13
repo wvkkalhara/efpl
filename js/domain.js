@@ -46,12 +46,12 @@
 
   /** Plain-words summary shown when an administrator picks a role for someone. */
   const ROLE_INFO = {
-    admin: 'Everything: all yard work, payments, people and their roles, prices and settings.',
-    supervisor: 'Accepts trucks and sets deductions, gives bays, approves gasifier issues, authorises payments, closes quality issues.',
-    storekeeper: 'Receives trucks, numbers and issues bags, checks returned bags, keeps the supplier list.',
-    operator: 'Asks for biomass for the gasifier, weighs and feeds it, reports quality problems.',
-    accounts: 'Releases authorised payments to Head Office and marks them paid. Sees deliveries, suppliers and reports.',
-    auditor: 'Sees every screen and the activity log, and cannot change anything.',
+    admin: 'Everything: all yard work, payments, people and their jobs, prices and settings.',
+    supervisor: 'Accepts trucks and puts them in bays, takes money off poor loads, approves gasifier requests and payments, closes problems.',
+    storekeeper: 'Receives trucks, looks after the bag store, gives bags to suppliers, keeps the supplier list.',
+    operator: 'Asks for bags for the gasifier, weighs and feeds them, counts the empty bags, reports problems.',
+    accounts: 'Sends approved payments to Head Office and marks them paid. Sees trucks, suppliers and reports.',
+    auditor: 'Sees every screen and the activity log, but cannot change anything.',
   };
 
   /** Roles an administrator is allowed to hand out (owner is special). */
@@ -70,18 +70,18 @@
      people, changing settings, and reading the whole activity log. */
   const TASKS = [
     { perm: 'delivery.create', group: 'Receiving', label: 'Receive trucks (weigh, count, fill check)' },
-    { perm: 'delivery.accept', group: 'Receiving', label: 'Accept trucks, give bays and set deductions' },
-    { perm: 'bay.allocate', group: 'Receiving', label: 'Add bays' },
-    { perm: 'bag.generate', group: 'Bags', label: 'Number new bags' },
-    { perm: 'bag.issue', group: 'Bags', label: 'Issue bags to suppliers' },
-    { perm: 'returns.write', group: 'Bags', label: 'Check returned bags' },
-    { perm: 'usage.request', group: 'Gasifier', label: 'Ask for biomass for the gasifier' },
-    { perm: 'usage.approve', group: 'Gasifier', label: 'Approve gasifier issues and choose the bay' },
+    { perm: 'delivery.accept', group: 'Receiving', label: 'Accept trucks, put them in bays, take money off poor loads' },
+    { perm: 'bay.allocate', group: 'Receiving', label: 'Add and change bays' },
+    { perm: 'bag.generate', group: 'Bags', label: 'Number and label bags' },
+    { perm: 'bag.issue', group: 'Bags', label: 'Give bags to suppliers' },
+    { perm: 'returns.write', group: 'Bags', label: 'Look after the bag store (new bags, torn bags, counting)' },
+    { perm: 'usage.request', group: 'Gasifier', label: 'Ask for bags for the gasifier' },
+    { perm: 'usage.approve', group: 'Gasifier', label: 'Approve gasifier requests and choose the bay' },
     { perm: 'usage.consume', group: 'Gasifier', label: 'Weigh and feed the gasifier' },
-    { perm: 'quality.report', group: 'Quality', label: 'Report quality problems and trace bags' },
-    { perm: 'quality.resolve', group: 'Quality', label: 'Close quality problems' },
-    { perm: 'payment.approve', group: 'Payments', label: 'Authorise payments and change deductions' },
-    { perm: 'payment.release', group: 'Payments', label: 'Release payments to Head Office' },
+    { perm: 'quality.report', group: 'Quality', label: 'Report problems and trace bags' },
+    { perm: 'quality.resolve', group: 'Quality', label: 'Close problems' },
+    { perm: 'payment.approve', group: 'Payments', label: 'Approve payments and change the amount taken off' },
+    { perm: 'payment.release', group: 'Payments', label: 'Send payments to Head Office' },
     { perm: 'payment.pay', group: 'Payments', label: 'Mark payments as paid' },
     { perm: 'supplier.write', group: 'Records', label: 'Add and edit suppliers' },
     { perm: 'report.read', group: 'Records', label: 'See reports' },
@@ -343,16 +343,16 @@
   };
   const PAYMENT_LABEL = {
     DRAFT: 'Draft',
-    PENDING_SUPERVISOR: 'Awaiting supervisor authorisation',
-    APPROVED: 'Authorised — to be released',
-    SENT_TO_HEAD_OFFICE: 'Sent to Head Office',
+    PENDING_SUPERVISOR: 'Waiting for the supervisor',
+    APPROVED: 'Approved, to send to Head Office',
+    SENT_TO_HEAD_OFFICE: 'With Head Office',
     PAID: 'Paid',
   };
   const paymentCanGo = (from, to) => (PAYMENT_FLOW[from] || []).includes(to);
   /** A step in a payment's history, in plain words. */
   const PAYMENT_ACTION = {
-    CREATED: 'Created', PENDING_SUPERVISOR: 'Sent for authorisation', APPROVED: 'Authorised',
-    SENT_TO_HEAD_OFFICE: 'Released to Head Office', PAID: 'Paid', DEDUCTION_SET: 'Deduction changed', DRAFT: 'Draft',
+    CREATED: 'Created', PENDING_SUPERVISOR: 'Sent to the supervisor', APPROVED: 'Approved',
+    SENT_TO_HEAD_OFFICE: 'Sent to Head Office', PAID: 'Paid', DEDUCTION_SET: 'Amount taken off changed', DRAFT: 'Draft',
   };
   const paymentActionLabel = (a) => PAYMENT_ACTION[a] || String(a || '').replace(/_/g, ' ').toLowerCase().replace(/^./, (c) => c.toUpperCase());
 
