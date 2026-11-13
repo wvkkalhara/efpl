@@ -377,14 +377,20 @@ function run() {
   const storeBefore = window.VH.bagStore();
   const bayBefore = window.VH.bagsInBay(Store.byId('usageRequests', useReq.id).bayId);
   App.consumeUsage(useReq.id);
-  // one bag weighed per type in the batch (bags x weight of one bag)
-  window.document.querySelectorAll('.modal [name^=tk]').forEach((el) => { el.value = '22.5'; el.dispatchEvent(new window.Event('input', { bubbles: true })); });
+  // all the bags of each type are weighed together: the total is typed
+  const typeTotal = (bagsName) => Number(window.document.querySelector(`.modal [name=${bagsName}]`).value) * 22.5;
+  window.document.querySelectorAll('.modal [name^=tk]').forEach((el) => { el.value = '22.5'; });   // one bag's weight, by mistake
+  window.document.querySelector('[data-act=ok]').click();
+  check('typing one bag\'s weight instead of all the bags is caught', () => Store.byId('usageRequests', useReq.id).status === 'APPROVED'
+    && /weight of all/.test(window.document.querySelector('.modal .form-errors').textContent));
+  window.document.querySelectorAll('.modal [name^=tk]').forEach((el) => { el.value = String(typeTotal(el.name.replace('tk', 'tb'))); el.dispatchEvent(new window.Event('input', { bubbles: true })); });
   const tornBox = window.document.querySelector('.modal [name=bagsTorn]');
   tornBox.value = '3'; tornBox.dispatchEvent(new window.Event('input', { bubbles: true }));
   window.document.querySelector('[data-act=ok]').click();
   const after = Store.byId('usageRequests', useReq.id);
-  check('feeding records one bag weight per type, and weight = bags x weight of one bag', () => after.status === 'CONSUMED' && after.avgBagKg === 22.5
-    && (after.typeWeights || []).length >= 1 && after.typeWeights.reduce((a, x) => a + x.bags, 0) === after.bags && after.totalKg === after.bags * 22.5);
+  check('feeding records the weight of all the bags per type; the average bag is weight ÷ bags', () => after.status === 'CONSUMED' && after.avgBagKg === 22.5
+    && (after.typeWeights || []).length >= 1 && after.typeWeights.reduce((a, x) => a + x.bags, 0) === after.bags
+    && after.totalKg === after.bags * 22.5 && after.typeWeights.every((x) => x.totalKg === x.bags * 22.5 && x.kg === 22.5));
   check('consumed bags leave the bay', () => window.VH.bagsInBay(after.bayId) === bayBefore - after.bags);
   check('the emptied bags are sorted: good ones to the used shelf, torn ones thrown away', () => {
     const st = window.VH.bagStore();
@@ -877,7 +883,7 @@ function run() {
     const r = Store.add('usageRequests', { requestNo: 'USE-0900', bayId: bay.id, bayCode: bay.code, bags: 20, status: 'APPROVED', requestedAt: new Date().toISOString(), approvedAt: new Date().toISOString() }, 'test');
     closeModals();
     App.consumeUsage(r.id);
-    window.document.querySelectorAll('.modal [name^=tk]').forEach((el) => { el.value = '21'; });
+    window.document.querySelectorAll('.modal [name^=tk]').forEach((el) => { el.value = String(21 * Number(window.document.querySelector(`.modal [name=${el.name.replace('tk', 'tb')}]`).value)); });
     window.document.querySelector('.modal [data-act=ok]').click();
     closeModals();
     const u = Store.byId('usageRequests', r.id);

@@ -750,7 +750,7 @@
               { label: 'Bay', render: (r) => esc(r.bayCode) },
               { label: 'Bags', cls: 'num', render: (r) => r.bags },
               { label: 'Weighed', render: (r) => ((r.typeWeights || []).length
-                ? r.typeWeights.map((x) => `<div class="small">${esc(x.label)}: ${x.bags} × ${x.kg} kg</div>`).join('')
+                ? r.typeWeights.map((x) => `<div class="small">${esc(x.label)}: ${x.bags} bags, ${x.totalKg ? `${x.totalKg} kg` : `${x.kg} kg each`}</div>`).join('')
                 : esc((r.sampleBags || []).join(' / ') || '—')) },
               { label: 'Avg bag', cls: 'num', render: (r) => (r.avgBagKg ? `${r.avgBagKg} kg` : '—') },
               { label: 'Moisture', render: (r) => VH.moistureBadge(r.avgBagKg ? D.moistureFromWeight(r.avgBagKg, s) : null) },
@@ -880,7 +880,8 @@
     }
     const loadsText = fromLoads.map((l) => `${l.receiptNo} (${(Store.byId('suppliers', l.supplierId) || {}).name || ''}, ${l.bags})`).join(', ');
     // One row per biomass type in this batch (Gliricidia, Cinnamon…): the
-    // bags of that type and the weight of ONE bag of it. Total = bags x weight.
+    // bags of that type and the weight of ALL those bags together. The
+    // average bag (weight ÷ bags) gives the moisture.
     const byType = new Map();
     for (const l of fromLoads) {
       const t = (Store.byId('deliveries', l.deliveryId) || {}).biomassType || 'OTHER';
@@ -892,12 +893,12 @@
     UI.modal({
       title: `Weigh and feed ${r.requestNo}`,
       body: `<div class="form-errors" role="alert"></div>
-        <p class="muted">For each type, weigh <b>one bag</b> and type how many bags of that type go in. The app multiplies: bags × weight of one bag.</p>
+        <p class="muted">For each type, type how many bags go in and weigh <b>all those bags</b>: type the total weight. The app works out the average bag and the moisture.</p>
         <div class="type-weigh">
           ${types.map((t, i) => `<div class="type-row">
             <b class="type-name">${esc(t.label)}</b>
             ${UI.field('Bags', UI.input('tb' + i, { type: 'number', min: 0, value: t.bags }))}
-            ${UI.field('One bag (kg)', UI.input('tk' + i, { type: 'number', step: '0.01', min: 0 }))}
+            ${UI.field('Weight of all these bags (kg)', UI.input('tk' + i, { type: 'number', step: '0.1', min: 0, placeholder: `${t.bags} bags together` }))}
           </div>`).join('')}
         </div>
         <div id="consume-out"></div>
@@ -911,17 +912,18 @@
         <label class="check"><input type="checkbox" name="problem" /> Something was wrong (bags not full, stones, rot, wrong material): report it after saving</label>`,
       footer: '<button class="nm-btn" data-close>Cancel</button><button class="nm-btn primary" data-act="ok">Save</button>',
       onMount(el, close) {
-        // rows as typed: bags and the weight of one bag, per type
-        const rows = () => types.map((t, i) => ({
-          type: t.type, label: t.label,
-          bags: Math.max(0, Math.round(Number(el.querySelector(`[name=tb${i}]`).value) || 0)),
-          kg: Number(el.querySelector(`[name=tk${i}]`).value) || 0,
-        }));
+        // rows as typed: bags and the total weight of those bags, per type;
+        // kg = the average bag of that type (total ÷ bags)
+        const rows = () => types.map((t, i) => {
+          const bags = Math.max(0, Math.round(Number(el.querySelector(`[name=tb${i}]`).value) || 0));
+          const totalKg = Number(el.querySelector(`[name=tk${i}]`).value) || 0;
+          return { type: t.type, label: t.label, bags, totalKg, kg: bags && totalKg ? D.round2(totalKg / bags) : 0 };
+        });
         const recalc = () => {
-          const rs = rows().filter((x) => x.bags > 0 && x.kg > 0);
+          const rs = rows().filter((x) => x.bags > 0 && x.totalKg > 0);
           const box = el.querySelector('#consume-out');
           if (!rs.length) { box.innerHTML = VH.moistureScale(null); return; }
-          const total = D.round2(rs.reduce((a, x) => a + x.bags * x.kg, 0));
+          const total = D.round2(rs.reduce((a, x) => a + x.totalKg, 0));
           const nb = rs.reduce((a, x) => a + x.bags, 0);
           const avg = D.round2(total / nb);
           box.innerHTML = `
@@ -943,8 +945,11 @@
         el.querySelector('[data-act=ok]').addEventListener('click', () => {
           const rs = rows();
           const typeBags = rs.reduce((a, x) => a + x.bags, 0);
-          const missingKg = rs.filter((x) => x.bags > 0 && !(x.kg > 0)).map((x) => x.label);
-          if (missingKg.length) return UI.showErrors(el, [`Weigh one bag of: ${missingKg.join(', ')}`]);
+          const missingKg = rs.filter((x) => x.bags > 0 && !(x.totalKg > 0)).map((x) => x.label);
+          if (missingKg.length) return UI.showErrors(el, [`Type the weight of all the bags of: ${missingKg.join(', ')}`]);
+          // a bag is 5 to 100 kg: anything else is a typing slip (one bag's weight typed, an extra zero)
+          const odd = rs.filter((x) => x.bags > 0 && (x.kg < 5 || x.kg > 100));
+          if (odd.length) return UI.showErrors(el, odd.map((x) => `${x.label}: ${x.totalKg} kg for ${x.bags} bags is ${x.kg} kg a bag. Type the weight of all ${x.bags} bags together.`));
           if (typeBags !== take) return UI.showErrors(el, [`The bags per type add up to ${typeBags}, but ${take} bags leave the bay`]);
           if (take < 1) return UI.toast(`${r.bayCode} is empty: there is nothing to issue`, 'danger');
           const bagsGood = Math.round(Number(good.value) || 0);
@@ -954,7 +959,7 @@
           }
           const reportProblem = el.querySelector('[name=problem]').checked;
           const used = rs.filter((x) => x.bags > 0);
-          const totalKg = D.round2(used.reduce((a, x) => a + x.bags * x.kg, 0));
+          const totalKg = D.round2(used.reduce((a, x) => a + x.totalKg, 0));
           const avg = D.round2(totalKg / take);
           const moisture = D.moistureFromWeight(avg, s);
           const ws = used.map((x) => x.kg);
@@ -975,13 +980,13 @@
 
           Store.update('usageRequests', r.id, {
             status: 'CONSUMED', bags: take, requestedBags: r.bags, sampleBags: ws, avgBagKg: avg, moisturePct: moisture,
-            typeWeights: used.map((x) => ({ type: x.type, label: x.label, bags: x.bags, kg: x.kg })), totalKg, consumedAt: now, consumedBy: Auth.current().email,
+            typeWeights: used.map((x) => ({ type: x.type, label: x.label, bags: x.bags, totalKg: x.totalKg, kg: x.kg })), totalKg, consumedAt: now, consumedBy: Auth.current().email,
             bagSerials: consumed.map((b) => b.serial), bagsGood, bagsTorn, fromLoads,
           }, 'usage-consume');
           // the bags just weighed are the newest reading of what is left in the bay
           if (Store.byId('bays', r.bayId)) Store.update('bays', r.bayId, { lastWeighKg: avg, lastWeighAt: now, lastWeighBy: Auth.current().email }, 'bay-weigh');
 
-          VH.audit('usage.consume', 'usage', r.id, `${take} bags from ${r.bayCode} · ${used.map((x) => `${x.bags} ${x.label} x ${x.kg} kg`).join(' + ')} = ${totalKg} kg · moisture ${moisture}% · empty bags: ${bagsGood} good, ${bagsTorn} torn`);
+          VH.audit('usage.consume', 'usage', r.id, `${take} bags from ${r.bayCode} · ${used.map((x) => `${x.bags} ${x.label} weighed ${x.totalKg} kg (${x.kg} kg a bag)`).join(' + ')} = ${totalKg} kg · moisture ${moisture}% · empty bags: ${bagsGood} good, ${bagsTorn} torn`);
           UI.toast(`${take} bags fed to the gasifier, ${kg(totalKg)}. ${bagsGood} empty bags back to the store${bagsTorn ? `, ${bagsTorn} torn` : ''}.`, 'ok', 5000);
           close(); App.refresh();
           if (reportProblem) setTimeout(() => App.raiseQuality(null, { usageId: r.id }), 280);

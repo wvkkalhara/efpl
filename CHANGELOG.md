@@ -3,6 +3,18 @@
 All notable changes to the EnerFab Biomass Storage system.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.9.3] — 2026-11-13
+
+### Changed
+
+* **Weigh and feed: the weight of all the bags, not one bag.** For each
+  type (gliricidia, cinnamon…) type the number of bags and the weight of
+  all those bags together. The app works out the average bag (weight ÷
+  bags) and the moisture. If the figure works out to less than 5 kg or more
+  than 100 kg a bag (for example one bag's weight typed by mistake), it asks
+  again. Each type's total is kept, and shown in the gasifier history and
+  the "Gasifier weighing by type" report. Help and training say the same.
+
 ## [1.9.2] — 2026-11-13
 
 ### Changed

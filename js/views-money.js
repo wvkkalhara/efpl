@@ -941,7 +941,7 @@
           for (const x of tw) {
             const k = x.type || x.label;
             const g = gasType[k] = gasType[k] || { label: x.label || VH.typeLabel(k), batches: 0, bags: 0, kg: 0 };
-            g.batches++; g.bags += Number(x.bags) || 0; g.kg += (Number(x.bags) || 0) * (Number(x.kg) || 0);
+            g.batches++; g.bags += Number(x.bags) || 0; g.kg += Number(x.totalKg) || (Number(x.bags) || 0) * (Number(x.kg) || 0);
           }
         }
         const gasTypeRows = Object.values(gasType).map((g) => Object.assign(g, { avg: g.bags ? D.round2(g.kg / g.bags) : null })).sort((a, b) => b.kg - a.kg);
@@ -1089,7 +1089,7 @@
           <section class="cols-2">
             <div class="nm-card pad">
               <div class="card-head"><h3>Gasifier weighing by type</h3><button class="link" id="csv-gastype"><i class="i i-download"></i>CSV</button></div>
-              <table class="mini"><thead><tr><th>Type</th><th class="num">Batches</th><th class="num">Bags</th><th class="num">One bag, average</th><th class="num">Total</th></tr></thead>
+              <table class="mini"><thead><tr><th>Type</th><th class="num">Batches</th><th class="num">Bags</th><th class="num">Average bag</th><th class="num">Total weighed</th></tr></thead>
                 <tbody>${r.gasTypeRows.map((g) => `<tr><td>${esc(g.label)}</td><td class="num">${g.batches}</td><td class="num">${g.bags.toLocaleString()}</td><td class="num">${g.avg ? `${g.avg} kg` : '—'}</td><td class="num">${kg(Math.round(g.kg))}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">Nothing went to the gasifier in this period.</td></tr>'}</tbody></table>
             </div>
             <div class="nm-card pad">

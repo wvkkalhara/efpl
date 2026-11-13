@@ -199,14 +199,14 @@
     },
     {
       id: 'gasifier', title: 'Feed the gasifier', badge: 'Fire starter', icon: 'flame',
-      blurb: 'Ask for biomass, approve the driest bay, weigh one bag of each type.',
+      blurb: 'Ask for biomass, approve the driest bay, weigh the bags of each type.',
       when: () => sees('gasifier'),
       steps: () => [
         { title: 'Open Gasifier', route: 'dashboard', target: navTarget('gasifier'), tap: true, next: 'gasifier', text: () => (navTarget('gasifier')() && navTarget('gasifier')().id === 'more-btn' ? '<b>Gasifier</b> is under <b>More</b>.' : '{Tap} <b>Gasifier</b>.') },
         { title: 'Driest bays first', route: 'gasifier', target: '#view .bay-grid', text: 'Bays with stock, <b>driest first</b>, with today\'s bag weight and moisture. Red ones are dry: use them first.' },
         { title: 'Ask for biomass', route: 'gasifier', when: () => can('usage.request'), target: '#new-usage', text: '<b>Ask for bags</b> asks for a number of bags from a bay. It then waits for the supervisor.' },
         { title: 'Approve', route: 'gasifier', when: () => can('usage.approve'), text: 'As supervisor you see each request under <b>Open requests</b>. <b>Approve and choose bay</b>: the driest bay is offered first, and you can weigh a bag to confirm.' },
-        { title: 'Weigh and feed', route: 'gasifier', when: () => can('usage.consume'), text: 'When a request is approved, press <b>Weigh and feed</b>: for each type (gliricidia, cinnamon…) type the <b>number of bags</b> and the weight of <b>one bag</b>. One bag × the bags gives the weight going in, and the bags leave the bay.' },
+        { title: 'Weigh and feed', route: 'gasifier', when: () => can('usage.consume'), text: 'When a request is approved, press <b>Weigh and feed</b>: for each type (gliricidia, cinnamon…) type the <b>number of bags</b> and the weight of <b>all those bags together</b>. The app works out the average bag and the moisture, and the bags leave the bay.' },
         { title: 'The empty bags', route: 'gasifier', when: () => can('usage.consume'), text: 'In the same window, count the empty bags: <b>good</b> ones go back to the bag store as used bags, <b>torn</b> ones are thrown away. Something wrong (bags not full, stones, rot)? Tick the box and report it: the app knows which load the bags came from, even without serials.' },
         { title: 'What went to the gasifier', route: 'gasifier', target: () => [...document.querySelectorAll('#view h3')].find((h) => /What went to the gasifier/.test(h.textContent)), text: 'Everything that went to the gasifier: bay, bags, average weight, moisture and who did it.' },
       ],

@@ -61,8 +61,8 @@
       + list(
         'The bays are listed driest first.',
         'The operator taps <b>Ask for bags</b>. The supervisor approves and picks the bay.',
-        'Then the operator weighs one bag of each type (gliricidia, cinnamon…), types how many bags of each, feeds the gasifier, and counts the empty bags (good or torn).',
-        'The weight is one bag × the number of bags, for each type.',
+        'Then the operator weighs all the bags of each type (gliricidia, cinnamon…), types how many bags and their total weight, feeds the gasifier, and counts the empty bags (good or torn).',
+        'The app works out the average bag (weight ÷ bags) and the moisture.',
       ),
     bags:
       p('Bags with serial numbers (stickers). Only needed if you label your bags.')
@@ -142,8 +142,8 @@
     [/^Request biomass/, p('Ask for bags for the gasifier.') + list('Pick the bay and how many bags.', 'The supervisor approves it.')],
     [/^Approve USE-/, p('Approve a request for the gasifier.') + list('Pick the bay. The driest is at the top.', 'You can weigh one bag to check the dryness.')],
     [/^Weigh and feed/, p('Feed the gasifier.') + list(
-      'For each type (gliricidia, cinnamon…), type the number of bags and weigh one bag.',
-      'The app works out the weight (one bag × the bags) and the wetness.',
+      'For each type (gliricidia, cinnamon…), type the number of bags and the weight of all those bags together.',
+      'The app works out the average bag (weight ÷ bags) and the wetness.',
       'Count the empty bags: good ones go back to the bag store, torn ones are thrown away.',
       'Something wrong with the biomass? Tick the box to report it.',
     )],

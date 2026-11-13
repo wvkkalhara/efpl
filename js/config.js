@@ -8,7 +8,7 @@
    ===================================================================== */
 window.EFPL_CONFIG = {
   appName: 'EnerFab Biomass Storage',
-  version: '1.9.2',
+  version: '1.9.3',
   build: '2026.11',
 
   /* ---- Firebase project (efpl-2feb8) ---- */
