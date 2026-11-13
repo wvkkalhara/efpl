@@ -745,11 +745,12 @@ function run() {
     return /Fill check sheet/.test(html) && /Bag 6/.test(html) && !/Bag 7/.test(html)
       && !/Total of all readings|Average \(total|Remarks/.test(html);
   });
-  check('every print carries the logo', () => {
+  check('every EnerFab print carries the logo (the invoice is the supplier\'s, so it does not)', () => {
     const pay = Store.all('payments')[0];
+    const inv = printed(() => App.printInvoice(accepted.id));
+    if (inv.includes('print-logo')) return false;
     const docs = [
       printed(() => App.printReceipt(accepted.id)),
-      printed(() => App.printInvoice(accepted.id)),
       printed(() => App.printFillSheet({})),
       printed(() => App.printPaymentSlip(pay.id)),
       printed(() => App.printSupplierStatement(acceptedSup.id)),
@@ -793,7 +794,13 @@ function run() {
   check('the invoice and the receipt carry the supplier\'s bank details', () => {
     const inv = printed(() => App.printInvoice(accepted.id));
     const rec = printed(() => App.printReceipt(accepted.id));
-    return !!acceptedSup.bankAccount && /Purchase invoice/.test(inv) && inv.includes(acceptedSup.bankAccount) && rec.includes(acceptedSup.bankAccount);
+    return !!acceptedSup.bankAccount && /INVOICE/.test(inv) && inv.includes(acceptedSup.bankAccount) && rec.includes(acceptedSup.bankAccount);
+  });
+  check('the invoice is issued in the supplier\'s name, billed to EnerFab', () => {
+    const inv = printed(() => App.printInvoice(accepted.id));
+    const head = inv.slice(0, inv.indexOf('<hr'));
+    return /Invoice from/.test(head) && head.includes(acceptedSup.name) && !/EnerFab/.test(head)
+      && /Bill to[\s\S]*EnerFab \(Pvt\) Ltd/.test(inv) && !/Purchase invoice|Bought by/.test(inv);
   });
   check('supplier search on Receive biomass narrows the list', () => {
     App.navigate('intake');

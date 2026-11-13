@@ -1516,14 +1516,26 @@
     const payable = VH.payable(d);
     const invNo = `INV-${String(d.receiptNo || '').replace(/^RC-/, '')}`;
     const full = d.fillCheck && d.fillCheck.fullPrice;
-    const html = `${VH.printHeader('Purchase invoice', `${invNo} · ${dOnly(d.acceptedAt || d.deliveredAt)}`)}
+    // The invoice is the supplier's: it is issued in their name, to EnerFab.
+    // EnerFab only prepares it for them, so there is no EnerFab letterhead.
+    const st = Store.settings();
+    const html = `<div class="row print-head inv-head">
+        <div class="print-title">
+          <div class="co">Invoice from</div>
+          <h1>${esc(sup.name || '')}</h1>
+          <div class="meta">${[esc(sup.address || ''), sup.phone ? `Tel ${esc(sup.phone)}` : '', sup.nic ? `NIC ${esc(sup.nic)}` : ''].filter(Boolean).join('<br/>')}</div>
+        </div>
+        <div style="text-align:right">
+          <h1>INVOICE</h1>
+          <div class="meta">No. <b>${esc(invNo)}</b><br/>Date ${esc(dOnly(d.acceptedAt || d.deliveredAt))}</div>
+        </div></div><hr/>
       <div class="row" style="margin-bottom:4mm">
+        <div><h2 style="margin-top:0">Bill to</h2>
+          <p><b>EnerFab (Pvt) Ltd</b><br/>${esc(st.siteName || '')}<br/>${esc(st.siteLocation || '')}</p></div>
         <div><h2 style="margin-top:0">Supplier</h2>
-          <p><b>${esc(sup.name || '')}</b><br/>${esc(sup.code || '')}${sup.nic ? ` · NIC ${esc(sup.nic)}` : ''}<br/>${esc(sup.address || '')}${sup.phone ? `<br/>${esc(sup.phone)}` : ''}</p></div>
-        <div><h2 style="margin-top:0">Bought by</h2>
-          <p><b>EnerFab (Pvt) Ltd</b><br/>${esc(Store.settings().siteName)}<br/>${esc(Store.settings().siteLocation)}</p></div>
+          <p><b>${esc(sup.name || '')}</b><br/>Supplier code ${esc(sup.code || '')}</p></div>
         <div><h2 style="margin-top:0">Reference</h2>
-          <p>Invoice <b>${esc(invNo)}</b><br/>Receipt ${esc(d.receiptNo || '')}<br/>${p.paymentNo ? `Payment ${esc(p.paymentNo)}<br/>` : ''}Weighbridge slip ${esc(d.weighbridgeSlip || '—')}</p></div>
+          <p>Receipt ${esc(d.receiptNo || '')}<br/>${p.paymentNo ? `Payment ${esc(p.paymentNo)}<br/>` : ''}Weighbridge slip ${esc(d.weighbridgeSlip || '—')}</p></div>
       </div>
       <table>
         <thead><tr><th>Description</th><th class="num">Quantity</th><th class="num">Rate</th><th class="num">Amount</th></tr></thead>
@@ -1534,16 +1546,16 @@
           <tr><th colspan="3">Amount payable</th><th class="num">${money(payable)}</th></tr>
         </tbody>
       </table>
-      <h2>Pay to</h2>
+      <h2>Please pay to</h2>
       <table>
         <tr><th>Account name</th><td>${esc(sup.bankAccountName || sup.name || '')}</td><th>Account number</th><td>${esc(sup.bankAccount || '')}</td></tr>
         <tr><th>Bank</th><td>${esc(sup.bankName || sup.bank || '')}</td><th>Branch</th><td>${esc(sup.bankBranch || '')}</td></tr>
       </table>
-      ${VH.bankText(sup) === 'No bank details on file' ? '<p class="meta"><b>No bank details are on file for this supplier.</b> Add them under Suppliers before this is sent for payment.</p>' : ''}
-      <p class="meta">Stored in: ${(d.allocations || []).map((a) => `${esc(a.bayCode)} (${a.bags})`).join(', ') || '—'}. Accepted by ${esc(d.acceptedBy || '')}${p.status ? `. Payment status: ${esc(D.PAYMENT_LABEL[p.status] || p.status)}` : ''}.</p>
-      <div style="display:flex;gap:16mm;margin-top:12mm">
-        <div class="sign">Supplier</div><div class="sign">Biomass supervisor</div><div class="sign">Head Office accounts</div>
-      </div>`;
+      ${VH.bankText(sup) === 'No bank details on file' ? '<p class="meta"><b>No bank details are on file for this supplier.</b> Add them before this is sent for payment.</p>' : ''}
+      <div style="display:flex;gap:16mm;margin-top:14mm">
+        <div class="sign">${esc(sup.name || 'Supplier')}<br/>Supplier's signature</div><div class="sign">Received by EnerFab<br/>Biomass supervisor</div><div class="sign">Approved for payment<br/>Head Office accounts</div>
+      </div>
+      <p class="meta" style="margin-top:8mm">Prepared by EnerFab (Pvt) Ltd for the supplier. Stored in: ${(d.allocations || []).map((a) => `${esc(a.bayCode)} (${a.bags})`).join(', ') || '—'}.</p>`;
     UI.print(html, `Invoice ${invNo}`);
     VH.audit('invoice.print', 'delivery', d.id, `${invNo} printed for ${sup.name || ''} · ${money(payable)}`);
   };

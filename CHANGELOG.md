@@ -3,6 +3,19 @@
 All notable changes to the EnerFab Biomass Storage system.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.9.2] — 2026-11-13
+
+### Changed
+
+* **The invoice is the supplier's invoice.** EnerFab prepares it for the
+  supplier, so it is issued in their name: "Invoice from" the supplier
+  (name, address, phone, NIC) at the top, with "INVOICE", the number and the
+  date, and "Bill to EnerFab (Pvt) Ltd". The EnerFab logo and letterhead are
+  gone from it. It ends with "Please pay to" (the supplier's bank),
+  signature lines for the supplier, the biomass supervisor and Head Office,
+  and a small line: "Prepared by EnerFab (Pvt) Ltd for the supplier".
+  The receipt, payment slip and statements keep the EnerFab letterhead.
+
 ## [1.9.1] — 2026-11-13
 
 ### Added
